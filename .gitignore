@@ -18,7 +18,6 @@
 
 # Libraries
 *.lib
-*.a
 *.la
 *.lo
 
@@ -76,5 +75,12 @@ android.*
 *.wasm
 *.html
 *.js
-!src/minshell.html
-!src/shell.html
+
+# Odin build artifacts
+*.wat
+
+# Odin cache
+odincache-*
+
+# Odin foreign imports (copied by build scripts into source tree)
+/src/box3d/*.a
