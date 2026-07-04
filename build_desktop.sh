@@ -41,7 +41,6 @@ cp "$SCRIPT_DIR/build/box3d/src/libbox3d.a" "$SRC_DIR/box3d/"
 # swap in the Raylib 6 static library without modifying the system Odin install.
 ODIN_REAL_ROOT=$(odin root)
 ODIN_FAKE_ROOT="$SCRIPT_DIR/build/odin_root"
-mkdir -p "$ODIN_FAKE_ROOT"
 
 if [ ! -d "$ODIN_FAKE_ROOT/vendor/raylib" ]; then
     rm -rf "$ODIN_FAKE_ROOT"

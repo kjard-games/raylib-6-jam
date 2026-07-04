@@ -19,22 +19,20 @@ emcmake cmake "$BOX3D_DIR" -DBOX3D_SAMPLES=OFF -DBOX3D_UNIT_TESTS=OFF -DBOX3D_BE
 emmake cmake --build . --config Release --parallel --target box3d
 cd "$SCRIPT_DIR"
 
-# Build raylib for wasm (if not already built)
-if [ ! -f "$RAYLIB_WASM_DIR/libraylib.a" ]; then
-  mkdir -p "$SCRIPT_DIR/build/raylib_wasm"
-  cd "$SCRIPT_DIR/build/raylib_wasm"
-  emcmake cmake "$RAYLIB_SRC_DIR" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_EXAMPLES=OFF \
-    -DBUILD_GAMES=OFF \
-    -DBUILD_GLFW=OFF \
-    -DPLATFORM=Web \
-    -DUSE_WAYLAND=OFF
-  emmake cmake --build . --config Release --parallel
-  mkdir -p "$RAYLIB_WASM_DIR"
-  cp "$SCRIPT_DIR/build/raylib_wasm/raylib/libraylib.a" "$RAYLIB_WASM_DIR/"
-  cd "$SCRIPT_DIR"
-fi
+# Build raylib for wasm from extern/raylib (Raylib 6)
+mkdir -p "$SCRIPT_DIR/build/raylib_wasm"
+cd "$SCRIPT_DIR/build/raylib_wasm"
+emcmake cmake "$RAYLIB_SRC_DIR" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_EXAMPLES=OFF \
+  -DBUILD_GAMES=OFF \
+  -DBUILD_GLFW=OFF \
+  -DPLATFORM=Web \
+  -DUSE_WAYLAND=OFF
+emmake cmake --build . --config Release --parallel
+mkdir -p "$RAYLIB_WASM_DIR"
+cp "$SCRIPT_DIR/build/raylib_wasm/raylib/libraylib.a" "$RAYLIB_WASM_DIR/"
+cd "$SCRIPT_DIR"
 
 # Build Box3D bridge for wasm
 emcc -c "$SRC_DIR/box3d/bridge.c" -I"$BOX3D_DIR/include" -O2 -o "$OUT_DIR/box3d_bridge.wasm.o"
