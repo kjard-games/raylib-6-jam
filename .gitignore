@@ -76,6 +76,9 @@ android.*
 *.html
 *.js
 
+# Except the Emscripten shell template used at build time
+!src/main_web/index_template.html
+
 # Odin build artifacts
 *.wat
 
