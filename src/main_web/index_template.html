@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en-us">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>raylib-6-jam</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas.game_canvas {
+            border: 0; background: #000;
+            display: block;
+            padding-left: 0; padding-right: 0;
+            margin-left: auto; margin-right: auto;
+            width: min(720px, 100vw, 100vh);
+            height: min(720px, 100vw, 100vh);
+        }
+    </style>
+</head>
+<body>
+    <canvas class="game_canvas" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"
+            onmousedown="event.target.focus()"></canvas>
+    <script type="text/javascript" src="odin.js"></script>
+    <script>
+        var odinMemoryInterface = new odin.WasmMemoryInterface();
+        odinMemoryInterface.setIntSize(4);
+        var odinImports = odin.setupDefaultImports(odinMemoryInterface);
+
+        var Module = {
+            instantiateWasm: (imports, successCallback) => {
+                const newImports = { ...odinImports, ...imports };
+                return WebAssembly.instantiateStreaming(fetch("index.wasm"), newImports).then(function(output) {
+                    var e = output.instance.exports;
+                    odinMemoryInterface.setExports(e);
+                    odinMemoryInterface.setMemory(e.memory);
+                    return successCallback(output.instance);
+                });
+            },
+            onRuntimeInitialized: () => {
+                var e = wasmExports;
+                e._start();
+                e.main_start();
+
+                function do_main_update() {
+                    if (!e.main_update()) {
+                        e.main_end();
+                        e._end();
+                        return;
+                    }
+                    window.requestAnimationFrame(do_main_update);
+                }
+                window.requestAnimationFrame(do_main_update);
+            },
+            canvas: (function() {
+                return document.getElementById("canvas");
+            })()
+        };
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>
