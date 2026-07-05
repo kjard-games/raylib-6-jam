@@ -38,6 +38,7 @@ copy /Y "%SCRIPT_DIR%build\box3d\src\Release\box3d.lib" "%SRC_DIR%\box3d\libbox3
 
 :: Swap in the Raylib 6 library that we built from extern/raylib
 for /f "tokens=*" %%a in ('odin root') do set ODIN_ROOT=%%a
+if "%ODIN_ROOT:~-1%"=="\" set ODIN_ROOT=%ODIN_ROOT:~0,-1%
 copy /Y "%SCRIPT_DIR%build\raylib_desktop\raylib\Release\raylib.lib" "%ODIN_ROOT%\vendor\raylib\windows\raylib.lib"
 
 :: Build game
