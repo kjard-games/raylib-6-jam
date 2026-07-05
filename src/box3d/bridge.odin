@@ -2,6 +2,8 @@ package box3d
 
 when ODIN_ARCH == .wasm32 || ODIN_ARCH == .wasm64p32 {
     foreign import lib "box3d_bridge.wasm.o"
+} else when ODIN_OS == .Windows {
+    foreign import lib "libbox3d.lib"
 } else {
     foreign import lib "libbox3d.a"
 }

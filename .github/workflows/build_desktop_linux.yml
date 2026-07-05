@@ -1,0 +1,51 @@
+name: Build Desktop - Linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-desktop-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libglfw3 libglfw3-dev libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev libxfixes-dev \
+            libwayland-dev libxkbcommon-dev
+
+      - name: Install Odin
+        run: |
+          mkdir -p "$HOME/odin"
+          curl -L -o "$HOME/odin.tar.gz" "https://github.com/odin-lang/Odin/releases/download/dev-2026-06/odin-linux-amd64-dev-2026-06.tar.gz"
+          tar -xzf "$HOME/odin.tar.gz" -C "$HOME/odin" --strip-components=1
+          echo "$HOME/odin" >> "$GITHUB_PATH"
+          "$HOME/odin/odin" version
+
+      - name: Build desktop package
+        run: bash build_desktop.sh
+
+      - name: Verify output
+        run: |
+          ls -lh build/desktop/game
+          file build/desktop/game
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: build/desktop/game

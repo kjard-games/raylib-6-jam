@@ -9,6 +9,24 @@ RAYLIB_DIR="$SCRIPT_DIR/extern/raylib"
 
 mkdir -p "$OUT_DIR"
 
+OS=$(uname -s)
+ARCH=$(uname -m)
+
+if [ "$OS" = "Darwin" ]; then
+    RAYLIB_VENDOR_SUBDIR="macos"
+    BRIDGE_CC="clang"
+elif [ "$OS" = "Linux" ]; then
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        RAYLIB_VENDOR_SUBDIR="linux-arm64"
+    else
+        RAYLIB_VENDOR_SUBDIR="linux"
+    fi
+    BRIDGE_CC="gcc"
+else
+    echo "Unsupported OS: $OS"
+    exit 1
+fi
+
 # Build Box3D library
 mkdir -p "$SCRIPT_DIR/build/box3d"
 cd "$SCRIPT_DIR/build/box3d"
@@ -31,7 +49,7 @@ if [ ! -f "$SCRIPT_DIR/build/raylib_desktop/raylib/libraylib.a" ]; then
 fi
 
 # Compile Box3D bridge
-clang -c "$SRC_DIR/box3d/bridge.c" -I"$BOX3D_DIR/include" -O2 -o "$OUT_DIR/box3d_bridge.o"
+"$BRIDGE_CC" -c "$SRC_DIR/box3d/bridge.c" -I"$BOX3D_DIR/include" -O2 -o "$OUT_DIR/box3d_bridge.o"
 
 # Copy Box3D library to package directory (for Odin foreign import)
 cp "$SCRIPT_DIR/build/box3d/src/libbox3d.a" "$SRC_DIR/box3d/"
@@ -59,8 +77,8 @@ if [ ! -d "$ODIN_FAKE_ROOT/vendor/raylib" ]; then
     done
 fi
 
-rm -f "$ODIN_FAKE_ROOT/vendor/raylib/macos/libraylib.a"
-cp "$SCRIPT_DIR/build/raylib_desktop/raylib/libraylib.a" "$ODIN_FAKE_ROOT/vendor/raylib/macos/libraylib.a"
+rm -f "$ODIN_FAKE_ROOT/vendor/raylib/$RAYLIB_VENDOR_SUBDIR/libraylib.a"
+cp "$SCRIPT_DIR/build/raylib_desktop/raylib/libraylib.a" "$ODIN_FAKE_ROOT/vendor/raylib/$RAYLIB_VENDOR_SUBDIR/libraylib.a"
 
 # Build game using the local ODIN_ROOT with Raylib 6
 ODIN_ROOT="$ODIN_FAKE_ROOT" odin build "$SRC_DIR" -out:"$OUT_DIR/game" -o:speed \
