@@ -15,6 +15,7 @@ ARCH=$(uname -m)
 if [ "$OS" = "Darwin" ]; then
     RAYLIB_VENDOR_SUBDIR="macos"
     BRIDGE_CC="clang"
+    EXTRA_LIBS=""
 elif [ "$OS" = "Linux" ]; then
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
         RAYLIB_VENDOR_SUBDIR="linux-arm64"
@@ -22,6 +23,7 @@ elif [ "$OS" = "Linux" ]; then
         RAYLIB_VENDOR_SUBDIR="linux"
     fi
     BRIDGE_CC="gcc"
+    EXTRA_LIBS="-lX11 -ldl -lpthread -lm"
 else
     echo "Unsupported OS: $OS"
     exit 1
@@ -82,6 +84,6 @@ cp "$SCRIPT_DIR/build/raylib_desktop/raylib/libraylib.a" "$ODIN_FAKE_ROOT/vendor
 
 # Build game using the local ODIN_ROOT with Raylib 6
 ODIN_ROOT="$ODIN_FAKE_ROOT" odin build "$SRC_DIR" -out:"$OUT_DIR/game" -o:speed \
-    -extra-linker-flags:"$OUT_DIR/box3d_bridge.o $SCRIPT_DIR/build/box3d/src/libbox3d.a"
+    -extra-linker-flags:"$OUT_DIR/box3d_bridge.o $SCRIPT_DIR/build/box3d/src/libbox3d.a $EXTRA_LIBS"
 
 echo "Desktop build created in ${OUT_DIR}/game"
