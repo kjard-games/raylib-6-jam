@@ -27,7 +27,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "C:\odin" | Out-Null
-          Invoke-WebRequest -Uri "https://github.com/odin-lang/Odin/releases/download/dev-2026-06/odin-windows-dev-2026-06.zip" -OutFile "C:\odin\odin.zip"
+          Invoke-WebRequest -Uri "https://github.com/odin-lang/Odin/releases/download/dev-2026-07/odin-windows-amd64-dev-2026-07.zip" -OutFile "C:\odin\odin.zip"
           Expand-Archive -Path "C:\odin\odin.zip" -DestinationPath "C:\odin" -Force
           Move-Item -Path "C:\odin\dist\*" -Destination "C:\odin" -Force
           Remove-Item -Path "C:\odin\dist" -Recurse -Force
@@ -42,6 +42,10 @@ jobs:
         shell: cmd
         run: |
           dir build\desktop\game.exe
+
+      - name: Verify constraints
+        shell: pwsh
+        run: .\scripts\check_constraints.ps1 desktop
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v4

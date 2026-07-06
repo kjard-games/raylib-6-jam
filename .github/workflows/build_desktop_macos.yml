@@ -23,7 +23,7 @@ jobs:
       - name: Install Odin
         run: |
           mkdir -p "$HOME/odin"
-          curl -L -o "$HOME/odin.tar.gz" "https://github.com/odin-lang/Odin/releases/download/dev-2026-06/odin-macos-arm64-dev-06.tar.gz"
+          curl -L -o "$HOME/odin.tar.gz" "https://github.com/odin-lang/Odin/releases/download/dev-2026-07/odin-macos-arm64-dev-2026-07.tar.gz"
           tar -xzf "$HOME/odin.tar.gz" -C "$HOME/odin" --strip-components=1
           echo "$HOME/odin" >> "$GITHUB_PATH"
           "$HOME/odin/odin" version
@@ -35,6 +35,9 @@ jobs:
         run: |
           ls -lh build/desktop/game
           file build/desktop/game
+
+      - name: Verify constraints
+        run: bash scripts/check_constraints.sh desktop
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v4
