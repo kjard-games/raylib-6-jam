@@ -17,12 +17,50 @@ HandTrackingState :: struct {
 
 hand_tracking_state: HandTrackingState
 
+HandTrackingStatus :: enum i32 {
+    Idle                = 0,
+    LoadingRuntime      = 1,
+    CreatingLandmarker  = 2,
+    WaitingForCamera    = 3,
+    RequestingCamera    = 4,
+    CameraStreamStarted = 5,
+    CameraActive        = 6,
+    NoGetUserMedia      = 7,
+    CameraFailed        = 8,
+    InitFailed          = 9,
+}
+
 when ODIN_ARCH == .wasm32 || ODIN_ARCH == .wasm64p32 {
     foreign import game_bridge "game_bridge"
 
     @(default_calling_convention="c")
     foreign game_bridge {
-        get_hand_landmarks :: proc(buffer: [^]f32, max_hands: i32) -> i32 ---
+        get_hand_landmarks      :: proc(buffer: [^]f32, max_hands: i32) -> i32 ---
+        get_hand_tracking_status :: proc() -> i32 ---
+    }
+}
+
+hand_tracking_status :: proc() -> HandTrackingStatus {
+    when ODIN_ARCH == .wasm32 || ODIN_ARCH == .wasm64p32 {
+        return HandTrackingStatus(get_hand_tracking_status())
+    } else {
+        return .Idle
+    }
+}
+
+hand_tracking_status_text :: proc(status: HandTrackingStatus) -> string {
+    switch status {
+    case .Idle:                return "MediaPipe: idle"
+    case .LoadingRuntime:      return "Loading MediaPipe runtime..."
+    case .CreatingLandmarker:  return "Creating HandLandmarker..."
+    case .WaitingForCamera:    return "HandLandmarker ready; waiting for camera..."
+    case .RequestingCamera:    return "Requesting camera permission..."
+    case .CameraStreamStarted: return "Camera stream started..."
+    case .CameraActive:        return "Camera active; running inference..."
+    case .NoGetUserMedia:      return "Camera unavailable: use HTTPS or localhost"
+    case .CameraFailed:        return "Camera permission denied or failed"
+    case .InitFailed:          return "MediaPipe initialization failed"
+    case:                      return "Unknown MediaPipe status"
     }
 }
 

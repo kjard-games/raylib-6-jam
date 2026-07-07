@@ -1,5 +1,6 @@
 package main
 
+import "core:strings"
 import rl "vendor:raylib"
 import b3 "box3d"
 
@@ -81,12 +82,13 @@ update :: proc() -> bool {
 
     rl.EndMode3D()
 
+    status := hand_tracking_status()
     if hand_tracking_state.num_hands > 0 {
         screen := hand_tip_screen_pos(0)
         rl.DrawCircleV(screen, 12, rl.GREEN)
         rl.DrawText("Hand tracked", 10, 30, 20, rl.DARKGREEN)
     } else {
-        rl.DrawText("No hand detected", 10, 30, 20, rl.DARKGRAY)
+        rl.DrawText(strings.clone_to_cstring(hand_tracking_status_text(status), context.temp_allocator), 10, 30, 20, rl.DARKGRAY)
     }
 
     rl.DrawFPS(10, 10)
