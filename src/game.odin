@@ -2,20 +2,23 @@ package main
 
 import "core:strings"
 import rl "vendor:raylib"
-import b3 "box3d"
+import b3 "vendor:box3d"
 
 WIDTH  :: 720
 HEIGHT :: 720
 
-BodyUser :: struct {
-	id:   u64,
-	size: f32,
+RacePhase :: enum i32 {
+	Countdown,
+	Racing,
+	Finished,
 }
 
 State :: struct {
-	world:  u32,
-	bodies: [dynamic]BodyUser,
-	camera: rl.Camera3D,
+	world:       b3.WorldId,
+	camera:      rl.Camera3D,
+	race_phase:  RacePhase,
+	countdown:   f32,
+	race_time:   f64,
 }
 
 state: State
@@ -25,7 +28,9 @@ init :: proc() {
 	rl.InitWindow(WIDTH, HEIGHT, "raylib-6-jam")
 	rl.InitAudioDevice()
 
-	state.world = b3.bw_create_world(0, -10, 0)
+	world_def := b3.DefaultWorldDef()
+	world_def.gravity = {0, -10, 0}
+	state.world = b3.CreateWorld(world_def)
 
 	init_track()
 	init_stance()
@@ -41,6 +46,10 @@ init :: proc() {
 		projection = .PERSPECTIVE,
 	}
 
+	state.race_phase = .Countdown
+	state.countdown = 3.0
+	state.race_time = 0
+
 	rl.SetTargetFPS(60)
 }
 
@@ -50,6 +59,14 @@ update :: proc() -> bool {
 
 	if rl.IsKeyPressed(.TAB) || rl.IsKeyPressed(.R) {
 		restart_race()
+	}
+
+	if state.race_phase == .Countdown {
+		state.countdown -= dt
+		if state.countdown <= 0 {
+			state.race_phase = .Racing
+			state.countdown = 0
+		}
 	}
 
 	for telemetry.accumulator >= FIXED_DT {
@@ -64,6 +81,7 @@ update :: proc() -> bool {
 
 	rl.BeginMode3D(state.camera)
 	draw_track()
+	draw_finish_line()
 	draw_broom()
 	rl.EndMode3D()
 
@@ -84,6 +102,12 @@ update :: proc() -> bool {
 	} else {
 		return !rl.WindowShouldClose()
 	}
+}
+
+draw_finish_line :: proc() {
+	finish := get_track_finish()
+	rl.DrawCube(finish + {0, -0.2, 0}, 10, 0.5, 0.2, rl.WHITE)
+	rl.DrawCube(finish + {0, 0.3, 0}, 10, 0.1, 0.2, {200, 200, 200, 255})
 }
 
 draw_track :: proc() {
@@ -131,12 +155,14 @@ restart_race :: proc() {
 	reset_broom()
 	init_stance()
 	init_time()
+	state.race_phase = .Countdown
+	state.countdown = 3.0
+	state.race_time = 0
 }
 
 shutdown :: proc() {
 	finish_run()
-	b3.bw_destroy_world(state.world)
-	delete(state.bodies)
+	b3.DestroyWorld(state.world)
 	rl.CloseAudioDevice()
 	rl.CloseWindow()
 }

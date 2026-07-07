@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:strings"
 import "core:time"
 import rl "vendor:raylib"
-import b3 "box3d"
+import b3 "vendor:box3d"
 
 FIXED_DT :: 1.0 / 60.0
 MAX_TICKS :: 60 * 60 * 10
@@ -163,6 +163,10 @@ save_csv_file :: proc(csv: string) {
 // Fixed-timestep tick — called by the game loop accumulator.
 // Returns true while the race is active (not finished).
 tick :: proc() -> bool {
+	if state.race_phase == .Countdown {
+		return true
+	}
+
 	if telemetry.playing_back {
 		if telemetry.playback_idx >= telemetry.count {
 			telemetry.playing_back = false
@@ -187,6 +191,10 @@ tick :: proc() -> bool {
 		advance_phase()
 	}
 
+	if state.race_phase == .Racing {
+		state.race_time += FIXED_DT
+	}
+
 	if !telemetry.playing_back {
 		inputs := TickInputs{
 			steer = controls_state.steer,
@@ -197,9 +205,18 @@ tick :: proc() -> bool {
 		record_tick(inputs)
 	}
 
-	update_broom(FIXED_DT)
+	simulate_broom(FIXED_DT)
+	b3.World_Step(state.world, FIXED_DT, 4)
+	sync_broom()
+
+	pos := get_broom_position()
+	if state.race_phase == .Racing && pos.z >= current_track.finish_pos.z {
+		state.race_phase = .Finished
+		telemetry.recording = false
+		finish_run()
+	}
+
 	update_camera()
-	b3.bw_step(state.world, FIXED_DT, 4)
 
 	return true
 }

@@ -1,6 +1,8 @@
 package main
 
+import "core:fmt"
 import "core:math"
+import "core:strings"
 import rl "vendor:raylib"
 
 PENTAGRAM_CENTER :: rl.Vector2{640, 640}
@@ -27,6 +29,28 @@ draw_hud :: proc() {
 	debounce := get_debounce_remaining()
 	phase := get_current_phase()
 	speed := get_broom_speed()
+
+	if state.race_phase == .Countdown {
+		secs := int(state.countdown) + 1
+		label := fmt.tprintf("%d", secs, context.temp_allocator)
+		clabel := strings.clone_to_cstring(label, context.temp_allocator)
+		tw := rl.MeasureText(clabel, 60)
+		rl.DrawText(clabel, WIDTH / 2 - tw / 2, HEIGHT / 2 - 30, 60, rl.WHITE)
+	} else {
+		mins := int(state.race_time) / 60
+		secs := int(state.race_time) % 60
+		millis := int(state.race_time * 100) % 100
+		time_label := fmt.tprintf("%02d:%02d.%02d", mins, secs, millis, context.temp_allocator)
+		ctime := strings.clone_to_cstring(time_label, context.temp_allocator)
+		rl.DrawText(ctime, WIDTH / 2 - 60, 10, 24, rl.WHITE)
+	}
+
+	if state.race_phase == .Finished {
+		label := "FINISH!"
+		clabel := strings.clone_to_cstring(label, context.temp_allocator)
+		tw := rl.MeasureText(clabel, 40)
+		rl.DrawText(clabel, WIDTH / 2 - tw / 2, HEIGHT / 2 - 60, 40, rl.YELLOW)
+	}
 
 	rl.DrawText(rl.TextFormat("SPEED: %.0f", speed), 10, 50, 20, rl.WHITE)
 
