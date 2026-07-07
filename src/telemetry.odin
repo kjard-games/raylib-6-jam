@@ -1,7 +1,10 @@
 package main
 
+import "core:c"
 import "core:fmt"
 import "core:strings"
+import "core:time"
+import rl "vendor:raylib"
 import b3 "box3d"
 
 FIXED_DT :: 1.0 / 60.0
@@ -99,9 +102,9 @@ record_tick :: proc(inputs: TickInputs) {
 	telemetry.count += 1
 }
 
-dump_telemetry_csv :: proc() {
+build_csv :: proc() -> string {
 	if telemetry.count == 0 {
-		return
+		return ""
 	}
 
 	b := strings.builder_make()
@@ -126,11 +129,35 @@ dump_telemetry_csv :: proc() {
 		)
 	}
 
-	csv := strings.to_string(b)
+	return strings.to_string(b)
+}
 
-	fmt.println("=== TELEMETRY DUMP ===")
-	fmt.println(csv)
-	fmt.println("=== END DUMP ===")
+finish_run :: proc() {
+	if telemetry.count == 0 {
+		return
+	}
+
+	csv := build_csv()
+	defer delete(csv)
+
+	when ODIN_ARCH == .wasm32 || ODIN_ARCH == .wasm64p32 {
+		fmt.println("=== TELEMETRY ===")
+		fmt.println(csv)
+		fmt.println("=== END ===")
+	} else {
+		save_csv_file(csv)
+	}
+	init_telemetry()
+}
+
+save_csv_file :: proc(csv: string) {
+	now := time.now()
+	year, month, day := time.date(now)
+	hour, min, sec := time.clock(now)
+	filename := fmt.tprintf("telemetry/run_%04d%02d%02d_%02d%02d%02d.csv", year, month, day, hour, min, sec)
+	fmt.printfln("Saving telemetry to %s", filename)
+	fn := strings.clone_to_cstring(filename, context.temp_allocator)
+	rl.SaveFileData(fn, raw_data(csv), c.int(len(csv)))
 }
 
 // Fixed-timestep tick — called by the game loop accumulator.

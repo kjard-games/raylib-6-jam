@@ -87,3 +87,6 @@ odincache-*
 
 # Odin foreign imports (copied by build scripts into source tree)
 /src/box3d/*.a
+
+# Telemetry recordings
+/telemetry/

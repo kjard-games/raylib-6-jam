@@ -48,8 +48,8 @@ update :: proc() -> bool {
 	dt := rl.GetFrameTime()
 	telemetry.accumulator += dt
 
-	if rl.IsKeyPressed(.F2) {
-		dump_telemetry_csv()
+	if rl.IsKeyPressed(.TAB) || rl.IsKeyPressed(.R) {
+		restart_race()
 	}
 
 	for telemetry.accumulator >= FIXED_DT {
@@ -126,7 +126,15 @@ draw_broom :: proc() {
 	rl.DrawSphere(pos, 0.4, col)
 }
 
+restart_race :: proc() {
+	finish_run()
+	reset_broom()
+	init_stance()
+	init_time()
+}
+
 shutdown :: proc() {
+	finish_run()
 	b3.bw_destroy_world(state.world)
 	delete(state.bodies)
 	rl.CloseAudioDevice()
