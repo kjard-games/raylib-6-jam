@@ -51,6 +51,8 @@ init :: proc() {
 update :: proc() -> bool {
     rl.UpdateCamera(&state.camera, .ORBITAL)
 
+    update_hand_tracking()
+
     b3.bw_step(state.world, 1.0 / 60.0, 4)
 
     rl.BeginDrawing()
@@ -67,7 +69,25 @@ update :: proc() -> bool {
         rl.DrawCubeWires(pos, b.size, b.size, b.size, rl.MAROON)
     }
 
+    if hand_tracking_state.num_hands > 0 {
+        tip := hand_index_tip(0)
+        world_pos := rl.Vector3{
+            (1.0 - tip[0]) * 14.0 - 7.0,
+            8.0 - tip[1] * 8.0,
+            tip[2] * 4.0,
+        }
+        rl.DrawSphere(world_pos, 0.3, rl.GREEN)
+    }
+
     rl.EndMode3D()
+
+    if hand_tracking_state.num_hands > 0 {
+        screen := hand_tip_screen_pos(0)
+        rl.DrawCircleV(screen, 12, rl.GREEN)
+        rl.DrawText("Hand tracked", 10, 30, 20, rl.DARKGREEN)
+    } else {
+        rl.DrawText("No hand detected", 10, 30, 20, rl.DARKGRAY)
+    }
 
     rl.DrawFPS(10, 10)
     rl.EndDrawing()
