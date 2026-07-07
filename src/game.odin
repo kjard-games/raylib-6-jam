@@ -8,102 +8,130 @@ WIDTH  :: 720
 HEIGHT :: 720
 
 BodyUser :: struct {
-    id:   u64,
-    size: f32,
+	id:   u64,
+	size: f32,
 }
 
 State :: struct {
-    world:  u32,
-    bodies: [dynamic]BodyUser,
-    camera: rl.Camera3D,
+	world:  u32,
+	bodies: [dynamic]BodyUser,
+	camera: rl.Camera3D,
 }
 
 state: State
 
 init :: proc() {
-    rl.SetConfigFlags({.VSYNC_HINT})
-    rl.InitWindow(WIDTH, HEIGHT, "raylib-6-jam")
-    rl.InitAudioDevice()
+	rl.SetConfigFlags({.VSYNC_HINT})
+	rl.InitWindow(WIDTH, HEIGHT, "raylib-6-jam")
+	rl.InitAudioDevice()
 
-    state.world = b3.bw_create_world(0, -10, 0)
+	state.world = b3.bw_create_world(0, -10, 0)
 
-    ground := b3.bw_create_body(state.world, 0, -2, 0, .Static)
-    b3.bw_create_box_shape(ground, 15, 1, 15)
+	init_track()
+	init_stance()
+	init_time()
+	init_broom()
 
-    for i in 0 ..< 10 {
-        x := f32(i % 5) * 2.5 - 5.0
-        z := f32(i / 5) * 2.5 - 2.5
-        body := b3.bw_create_body(state.world, x, 5 + f32(i) * 0.5, z, .Dynamic)
-        b3.bw_create_box_shape(body, 0.5, 0.5, 0.5)
-        append(&state.bodies, BodyUser{id = body, size = 1.0})
-    }
+	state.camera = rl.Camera3D {
+		position   = {12, 8, 12},
+		target     = {0, 1, 0},
+		up         = {0, 1, 0},
+		fovy       = 60,
+		projection = .PERSPECTIVE,
+	}
 
-    state.camera = rl.Camera3D {
-        position = {12, 8, 12},
-        target   = {0, 1, 0},
-        up       = {0, 1, 0},
-        fovy     = 60,
-        projection = .PERSPECTIVE,
-    }
-
-    rl.SetTargetFPS(60)
+	rl.SetTargetFPS(60)
 }
 
 update :: proc() -> bool {
-    rl.UpdateCamera(&state.camera, .ORBITAL)
+	dt := rl.GetFrameTime()
 
-    update_hand_tracking()
+	update_controls()
+	update_stance(dt)
 
-    b3.bw_step(state.world, 1.0 / 60.0, 4)
+	if consume_advance_flag() {
+		advance_phase()
+	}
 
-    rl.BeginDrawing()
-    rl.ClearBackground(rl.SKYBLUE)
+	update_broom(dt)
+	update_camera()
 
-    rl.BeginMode3D(state.camera)
-    rl.DrawGrid(20, 2)
+	b3.bw_step(state.world, dt, 4)
 
-    for b in state.bodies {
-        x, y, z: f32
-        b3.bw_get_body_position(b.id, &x, &y, &z)
-        pos := rl.Vector3{x, y, z}
-        rl.DrawCube(pos, b.size, b.size, b.size, rl.RED)
-        rl.DrawCubeWires(pos, b.size, b.size, b.size, rl.MAROON)
-    }
+	rl.BeginDrawing()
+	rl.ClearBackground(rl.SKYBLUE)
 
-    if hand_tracking_state.num_hands > 0 {
-        tip := hand_index_tip(0)
-        world_pos := rl.Vector3{
-            (1.0 - tip[0]) * 14.0 - 7.0,
-            8.0 - tip[1] * 8.0,
-            tip[2] * 4.0,
-        }
-        rl.DrawSphere(world_pos, 0.3, rl.GREEN)
-    }
+	rl.BeginMode3D(state.camera)
+	draw_track()
+	draw_broom()
+	rl.EndMode3D()
 
-    rl.EndMode3D()
+	draw_hud()
 
-    status := hand_tracking_status()
-    if hand_tracking_state.num_hands > 0 {
-        screen := hand_tip_screen_pos(0)
-        rl.DrawCircleV(screen, 12, rl.GREEN)
-        rl.DrawText("Hand tracked", 10, 30, 20, rl.DARKGREEN)
-    } else {
-        rl.DrawText(strings.clone_to_cstring(hand_tracking_status_text(status), context.temp_allocator), 10, 30, 20, rl.DARKGRAY)
-    }
+	hand_status := hand_tracking_status()
+	rl.DrawText(strings.clone_to_cstring(hand_tracking_status_text(hand_status), context.temp_allocator), 10, 10, 14, rl.DARKGRAY)
 
-    rl.DrawFPS(10, 10)
-    rl.EndDrawing()
+	if hand_tracking_state.num_hands > 0 {
+		rl.DrawCircleV(hand_tip_screen_pos(0), 12, rl.GREEN)
+	}
 
-    when ODIN_OS == .JS {
-        return true
-    } else {
-        return !rl.WindowShouldClose()
-    }
+	rl.DrawFPS(10, 140)
+	rl.EndDrawing()
+
+	when ODIN_OS == .JS {
+		return true
+	} else {
+		return !rl.WindowShouldClose()
+	}
+}
+
+draw_track :: proc() {
+	blocks := get_track_blocks()
+	for block in blocks {
+		surface_colors := [Surface]rl.Color{
+			.Dirt     = {120, 80, 40, 255},
+			.Pavement = {80, 80, 80, 255},
+			.Sand     = {180, 160, 100, 255},
+			.Grass    = {60, 140, 60, 255},
+		}
+		col := surface_colors[block.surface]
+		half_w := block.width / 2
+		half_l := block.length / 2
+		cx := block.start.x + block.curvature * block.length * 0.3
+		cz := block.start.z + half_l
+		rl.DrawCube({cx, -0.5, cz}, block.width, 0.5, block.length, col)
+		rl.DrawCubeWires({cx, -0.5, cz}, block.width, 0.5, block.length, rl.BLACK)
+	}
+
+	// Checkpoints.
+	checkpoints := get_checkpoints()
+	for cp in checkpoints {
+		rl.DrawCube(cp.position + {0, -0.2, 0}, 0.5, 0.1, 0.5, rl.YELLOW)
+	}
+}
+
+draw_broom :: proc() {
+	pos := get_broom_position()
+	fwd := get_broom_forward()
+
+	// Broom body.
+	rl.DrawCube(pos, 0.1, 0.1, 0.6, rl.DARKBROWN)
+	rl.DrawCube(pos + fwd * 0.35, 0.15, 0.05, 0.1, {100, 60, 30, 255})
+
+	// Rider (simple cone).
+	rider_pos := pos - fwd * 0.15
+	rider_pos.y += 0.2
+	rl.DrawCylinder(rider_pos, 0.02, 0.12, 0.25, 6, rl.DARKGREEN)
+
+	// Glow sphere — stance color.
+	col := stance_colors[get_current_stance()]
+	col.a = 100
+	rl.DrawSphere(pos, 0.4, col)
 }
 
 shutdown :: proc() {
-    b3.bw_destroy_world(state.world)
-    delete(state.bodies)
-    rl.CloseAudioDevice()
-    rl.CloseWindow()
+	b3.bw_destroy_world(state.world)
+	delete(state.bodies)
+	rl.CloseAudioDevice()
+	rl.CloseWindow()
 }

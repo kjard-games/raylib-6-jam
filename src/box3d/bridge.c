@@ -46,3 +46,9 @@ uint64_t bw_create_box_shape(uint64_t body, float hx, float hy, float hz)
     def.density = 1.0f;
     return b3StoreShapeId(b3CreateHullShape(b3LoadBodyId(body), &def, &box.base));
 }
+
+void bw_set_body_transform(uint64_t body, float x, float y, float z, float rx, float ry, float rz)
+{
+    b3BodyId id = b3LoadBodyId(body);
+    b3Body_SetTransform(id, (b3Vec3){x, y, z}, (b3Quat){rx, ry, rz, 1.0f});
+}

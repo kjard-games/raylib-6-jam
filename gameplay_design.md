@@ -157,41 +157,43 @@ Every stance is the **Accel** stance on exactly one surface and the **Drift** st
 
 ### Wheel rotation
 
-The effect sequence for every surface is `[Drift, –, –, Accel]` at phase 0. Each tick shifts the sequence by 1 position:
+Each surface has its own base effect sequence at phase 0. All sequences rotate right by (T − P) mod 4 each tick:
 
-| Phase | Effect Sequence |
-|-------|-----------------|
-| Noon (0) | `[Drift, –, –, Accel]` |
-| Dusk (1) | `[Accel, Drift, –, –]` |
-| Midnight (2) | `[–, Accel, Drift, –]` |
-| Dawn (3) | `[–, –, Accel, Drift]` |
+| Surface | Base Sequence (Noon) |
+|---------|----------------------|
+| Dirt    | `[Drift, –, –, Accel]` over `[Speed, Drift, Fist, OK]` |
+| Pavement| `[Accel, –, Drift, –]` |
+| Sand    | `[–, Accel, –, Drift]` |
+| Grass   | `[–, Drift, Accel, –]` |
+
+At phase P, effect for stance at index T = `base_sequence[(T − P) mod 4]`.
 
 **Dusk (phase 1):**
 
 | Surface | Speed | Drift | Fist | OK |
 |---------|-------|-------|------|-----|
 | Dirt    | **Accel** | **Drift** | –    | –   |
-| Pavement| –     | **Accel** | **Drift** | –   |
-| Sand    | –     | –     | **Accel** | **Drift** |
-| Grass   | **Drift** | –     | –    | **Accel** |
+| Pavement| –     | **Accel** | –    | **Drift** |
+| Sand    | **Drift** | –     | **Accel** | –   |
+| Grass   | –     | –     | **Drift** | **Accel** |
 
 **Midnight (phase 2):**
 
 | Surface | Speed | Drift | Fist | OK |
 |---------|-------|-------|------|-----|
 | Dirt    | –     | **Accel** | **Drift** | –   |
-| Pavement| –     | –     | **Accel** | **Drift** |
-| Sand    | **Drift** | –     | –    | **Accel** |
-| Grass   | **Accel** | **Drift** | –    | –   |
+| Pavement| **Drift** | –     | **Accel** | –   |
+| Sand    | –     | **Drift** | –    | **Accel** |
+| Grass   | **Accel** | –     | –    | **Drift** |
 
 **Dawn (phase 3):**
 
 | Surface | Speed | Drift | Fist | OK |
 |---------|-------|-------|------|-----|
 | Dirt    | –     | –     | **Accel** | **Drift** |
-| Pavement| **Drift** | –     | –    | **Accel** |
-| Sand    | **Accel** | **Drift** | –    | –   |
-| Grass   | –     | **Accel** | **Drift** | –   |
+| Pavement| –     | **Drift** | –    | **Accel** |
+| Sand    | **Accel** | –     | **Drift** | –   |
+| Grass   | **Drift** | **Accel** | –    | –   |
 
 ### Mathematical property
 
@@ -258,8 +260,10 @@ src/
 ```odin
 get_current_stance :: proc() -> Stance
 get_valid_targets :: proc() -> [2]Stance
-switch_stance :: proc(target: Stance) -> bool  // false if invalid/cooldown
+switch_stance :: proc(target: Stance) -> bool    // respects adjacency + debounce
+switch_stance_unchecked :: proc(target: Stance)  // dev bypass
 get_debounce_remaining :: proc() -> f32
+consume_advance_flag :: proc() -> bool            // true if Advance was just activated
 update_stance :: proc(dt: f32)
 ```
 
@@ -272,18 +276,15 @@ get_effect :: proc(surface: Surface, stance: Stance) -> Effect
 
 **track.odin:**
 ```odin
-get_surface_at :: proc(position: Vec3) -> Surface
+get_surface_at :: proc(position: rl.Vector3) -> Surface
 get_track_blocks :: proc() -> []TrackBlock
 ```
 
 **controls.odin:**
 ```odin
-get_steer :: proc() -> f32
-is_accelerating :: proc() -> bool
-is_braking :: proc() -> bool
-get_stance_key :: proc() -> (Stance, bool)
-is_respawn :: proc() -> bool
-is_restart :: proc() -> bool
+// Controls state is read directly by broom_physics:
+//   controls_state.steer, .accelerate, .brake
+// Stance switching uses switch_stance_unchecked(key) via keyboard handler.
 ```
 
 ### Dev notes / guardrails
@@ -310,10 +311,10 @@ Discrete block/section-based, like Trackmania. Each track segment is a tile with
 **Data format (start):**
 ```odin
 TrackBlock :: struct {
-    surface:  Surface,
-    start:    Vec3,
-    end:      Vec3,
-    width:    f32,
+    surface:   Surface,
+    start:     rl.Vector3,
+    length:    f32,
+    width:     f32,
     curvature: f32,  // 0 = straight, positive = right, negative = left
 }
 ```

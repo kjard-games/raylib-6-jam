@@ -23,4 +23,5 @@ foreign lib {
     bw_destroy_body      :: proc(body: u64) ---
     bw_get_body_position :: proc(body: u64, x, y, z: ^f32) ---
     bw_create_box_shape  :: proc(body: u64, hx, hy, hz: f32) -> u64 ---
+    bw_set_body_transform :: proc(body: u64, x, y, z, rx, ry, rz: f32) ---
 }
