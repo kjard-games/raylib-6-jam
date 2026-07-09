@@ -216,11 +216,14 @@ tick :: proc() -> bool {
 	b3.World_Step(state.world, FIXED_DT, 4)
 	sync_broom()
 
-	pos := get_broom_position()
-	if state.race_phase == .Racing && pos.z >= current_track.finish_pos.z {
-		state.race_phase = .Finished
-		telemetry.recording = false
-		finish_run()
+	sensor_events := b3.World_GetSensorEvents(state.world)
+	for i in 0..<sensor_events.beginCount {
+		e := sensor_events.beginEvents[i]
+		if e.sensorShapeId == state.finish_sensor && state.race_phase == .Racing {
+			state.race_phase = .Finished
+			telemetry.recording = false
+			finish_run()
+		}
 	}
 
 	update_camera()

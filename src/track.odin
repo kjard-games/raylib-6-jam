@@ -1,143 +1,230 @@
 package main
 
-import "core:math"
+import "core:fmt"
 import rl "vendor:raylib"
 import b3 "vendor:box3d"
 
-Checkpoint :: struct {
-	position: rl.Vector3,
-	index:    i32,
+ROAD_WIDTH     :: f32(10.0)
+ROAD_THICKNESS :: f32(0.15)
+
+WallType :: enum {
+	None,
+	Wall,
+	Curb,
 }
 
-Tile :: struct {
-	template:   BlockTemplate,
-	gx, gy, gz: int,
-	rotation:   int,
-	dy:         int,
-	surface:    Surface,
+TrackControlPoint :: struct {
+	pos:       rl.Vector3,
+	surface:   Surface,
 	wall_left:  WallType,
 	wall_right: WallType,
-	boost:      bool,
+	boost:     bool,
+}
+
+SurfaceSample :: struct {
+	pos:     b3.Vec3,
+	surface: Surface,
 }
 
 Track3D :: struct {
-	tiles:       []Tile,
-	tile_lookup: map[[2]int]^Tile,
-	start_pos:   rl.Vector3,
-	finish_pos:  rl.Vector3,
-	checkpoints: []Checkpoint,
-}
-
-Segment :: struct {
-	template:   BlockTemplate,
-	dy:         int,
-	surface:    Surface,
-	wall_left:  WallType,
-	wall_right: WallType,
-	boost:      bool,
-}
-
-template_grid_out :: proc(t: BlockTemplate, dy, dir: int) -> (dx, dy_out, dz: int) {
-	switch t {
-	case .Straight, .JumpRamp:
-		switch dir & 3 {
-		case 0: dz = 1
-		case 1: dx = 1
-		case 2: dz = -1
-		case 3: dx = -1
-		}
-		dy_out = dy
-	case .Slope:
-		switch dir & 3 {
-		case 0: dz = 1
-		case 1: dx = 1
-		case 2: dz = -1
-		case 3: dx = -1
-		}
-		dy_out = dy
-	case .Descent:
-		switch dir & 3 {
-		case 0: dz = 1
-		case 1: dx = 1
-		case 2: dz = -1
-		case 3: dx = -1
-		}
-		dy_out = -dy
-	case .Turn, .TurnSlope:
-		next_dir := (dir + 1) & 3
-		switch next_dir {
-		case 0: dz = 1
-		case 1: dx = 1
-		case 2: dz = -1
-		case 3: dx = -1
-		}
-		dy_out = dy
-	}
-	return
-}
-
-build_track_from_segments :: proc(segments: []Segment, start_gx, start_gy, start_gz, start_dir: int) -> []Tile {
-	tiles := make([]Tile, len(segments))
-	cx, cy, cz := start_gx, start_gy, start_gz
-	dir := start_dir
-
-	for seg, i in segments {
-		tiles[i] = Tile{
-			template   = seg.template,
-			gx         = cx,
-			gy         = cy,
-			gz         = cz,
-			rotation   = dir,
-			dy         = seg.dy,
-			surface    = seg.surface,
-			wall_left  = seg.wall_left,
-			wall_right = seg.wall_right,
-			boost      = seg.boost,
-		}
-
-		dx, ddy, dz := template_grid_out(seg.template, seg.dy, dir)
-		cx += dx
-		cy += ddy
-		cz += dz
-
-		#partial switch seg.template {
-		case .Turn, .TurnSlope:
-			dir = (dir + 1) & 3
-		case .Straight, .Slope, .Descent, .JumpRamp:
-		}
-	}
-
-	return tiles
+	points:         []TrackControlPoint,
+	spline_pos:     []b3.Vec3,
+	mesh_model:     rl.Model,
+	collision_mesh: ^b3.MeshData,
+	samples:        []SurfaceSample,
+	start_pos:      rl.Vector3,
+	finish_pos:     rl.Vector3,
 }
 
 current_track: Track3D
 
-init_track :: proc() {
-	current_track.tiles = build_map00()
-	current_track.checkpoints = {}
+RENDER_SAMPLES_PER_SEG   :: 32
+SURFACE_SAMPLES_PER_SEG  :: 16
+COLLISION_SAMPLES_PER_SEG :: 8
 
-	current_track.tile_lookup = make(map[[2]int]^Tile)
-	for i in 0 ..< len(current_track.tiles) {
-		t := &current_track.tiles[i]
-		current_track.tile_lookup[[2]int{t.gx, t.gz}] = t
+init_track :: proc() {
+	points := build_map00()
+	current_track.points = points
+	n := len(points)
+
+	current_track.start_pos = points[0].pos
+	last := points[n-1]
+	current_track.finish_pos = last.pos
+
+	fmt.eprintfln("init_track: %d points, start=(%v) finish=(%v)", n, current_track.start_pos, current_track.finish_pos)
+	for i in 0..<n {
+		fmt.eprintfln("  pt[%d] pos=(%v) surface=%v", i, points[i].pos, points[i].surface)
 	}
 
-	first := &current_track.tiles[0]
-	f_origin := tile_world_origin(first.gx, first.gy, first.gz)
-	current_track.start_pos = {f_origin[0], f_origin[1] + 0.5, f_origin[2]}
+	raw_pos := make([]b3.Vec3, n)
+	for i in 0..<n {
+		raw_pos[i] = b3.Vec3(points[i].pos)
+	}
+	current_track.spline_pos = make_catmull_rom_points(raw_pos)
+	fmt.eprintfln("init_track: spline has %d points (including ghosts)", len(current_track.spline_pos))
 
-	last := &current_track.tiles[len(current_track.tiles) - 1]
-	last_out_dx, last_out_dy, last_out_dz := template_grid_out(last.template, last.dy, last.rotation)
-	lo := tile_world_origin(last.gx + last_out_dx, last.gy + last_out_dy, last.gz + last_out_dz)
-	current_track.finish_pos = {lo[0], lo[1] + 0.5, lo[2]}
+	build_surface_samples(current_track.spline_pos)
+	build_track_model(current_track.spline_pos)
 }
 
-get_tiles :: proc() -> []Tile {
-	return current_track.tiles
+build_surface_samples :: proc(spline_pos: []b3.Vec3) {
+	n := len(current_track.points)
+	num_segs := n - 1
+	total := num_segs * SURFACE_SAMPLES_PER_SEG + 1
+	samples := make([]SurfaceSample, total)
+
+	idx := 0
+	for seg in 0..<num_segs {
+		cp := current_track.points[seg]
+		for s in 0..<SURFACE_SAMPLES_PER_SEG {
+			t := f32(s) / f32(SURFACE_SAMPLES_PER_SEG)
+			pos, _, _, _ := get_road_frame(spline_pos, seg, t)
+			samples[idx] = SurfaceSample{pos = pos, surface = cp.surface}
+			idx += 1
+		}
+	}
+	last := current_track.points[n-1]
+	samples[idx] = SurfaceSample{pos = b3.Vec3(last.pos), surface = last.surface}
+	current_track.samples = samples
 }
 
-get_checkpoints :: proc() -> []Checkpoint {
-	return current_track.checkpoints
+build_track_model :: proc(spline_pos: []b3.Vec3) {
+	n := len(current_track.points)
+	num_segs := n - 1
+	total_samples := num_segs * RENDER_SAMPLES_PER_SEG + 1
+
+	vc := total_samples * 2
+	tc := (total_samples - 1) * 2
+
+	vert_arr := make([]f32, vc * 3)
+	norm_arr := make([]f32, vc * 3)
+	tc_arr := make([]f32, vc * 2)
+	col_arr := make([]u8, vc * 4)
+	idx_arr := make([]u16, tc * 3)
+
+	surface_colors := [Surface]rl.Color{
+		.Dirt     = {120, 80, 40, 255},
+		.Pavement = {80, 80, 80, 255},
+		.Sand     = {180, 160, 100, 255},
+		.Grass    = {60, 140, 60, 255},
+	}
+
+	hw := ROAD_WIDTH * 0.5
+
+	vi := 0
+	for seg in 0..<num_segs {
+		cp := current_track.points[seg]
+		col := surface_colors[cp.surface]
+
+		for s in 0..<RENDER_SAMPLES_PER_SEG {
+			t := f32(s) / f32(RENDER_SAMPLES_PER_SEG)
+			pos, fwd, right, norm := get_road_frame(spline_pos, seg, t)
+
+			left_v := pos + right * hw
+			right_v := pos - right * hw
+
+			right_side := [2]bool{false, true}
+			for is_right in right_side {
+				p := right_v if is_right else left_v
+				base := vi * 3
+				vert_arr[base+0] = p.x; vert_arr[base+1] = p.y; vert_arr[base+2] = p.z
+				norm_arr[base+0] = norm.x; norm_arr[base+1] = norm.y; norm_arr[base+2] = norm.z
+				cb := vi * 4
+				col_arr[cb+0] = col.r; col_arr[cb+1] = col.g; col_arr[cb+2] = col.b; col_arr[cb+3] = col.a
+				tc_arr[vi*2+0] = 1.0 if is_right else 0.0
+				tc_arr[vi*2+1] = f32(seg) + t
+				vi += 1
+			}
+		}
+	}
+
+	pos, fwd, right, norm := get_road_frame(spline_pos, num_segs-1, 1.0)
+	last_cp := current_track.points[n-1]
+	col := surface_colors[last_cp.surface]
+	left_v := pos + right * hw
+	right_v := pos - right * hw
+	side_ends := [2]bool{false, true}
+	for is_right in side_ends {
+		p := right_v if is_right else left_v
+		base := vi * 3
+		vert_arr[base+0] = p.x; vert_arr[base+1] = p.y; vert_arr[base+2] = p.z
+		norm_arr[base+0] = norm.x; norm_arr[base+1] = norm.y; norm_arr[base+2] = norm.z
+		cb := vi * 4
+		col_arr[cb+0] = col.r; col_arr[cb+1] = col.g; col_arr[cb+2] = col.b; col_arr[cb+3] = col.a
+		tc_arr[vi*2+0] = 1.0 if is_right else 0.0
+		tc_arr[vi*2+1] = f32(num_segs)
+		vi += 1
+	}
+
+	ii := 0
+	for i in 0..<total_samples - 1 {
+		a := i * 2
+		b := a + 1
+		c := (i + 1) * 2
+		d := c + 1
+		idx_arr[ii+0] = u16(a)
+		idx_arr[ii+1] = u16(b)
+		idx_arr[ii+2] = u16(c)
+		idx_arr[ii+3] = u16(c)
+		idx_arr[ii+4] = u16(b)
+		idx_arr[ii+5] = u16(d)
+		ii += 6
+	}
+
+	mesh := rl.Mesh{
+		vertexCount   = i32(vc),
+		triangleCount = i32(tc),
+		vertices      = raw_data(vert_arr),
+		normals       = raw_data(norm_arr),
+		texcoords     = raw_data(tc_arr),
+		colors        = raw_data(col_arr),
+		indices       = raw_data(idx_arr),
+	}
+
+	fmt.eprintfln("build_track_model: vc=%d tc=%d", vc, tc)
+	for i in 0..<min(6, vc) {
+		base := i * 3
+		fmt.eprintfln("  vert[%d] = (%f %f %f) norm=(%f %f %f) tc=(%f %f)", i, vert_arr[base], vert_arr[base+1], vert_arr[base+2], norm_arr[base], norm_arr[base+1], norm_arr[base+2], tc_arr[i*2], tc_arr[i*2+1])
+	}
+	for i := max(0, vc-4); i < vc; i += 1 {
+		base := i * 3
+		fmt.eprintfln("  vert[%d] = (%f %f %f) norm=(%f %f %f) tc=(%f %f)", i, vert_arr[base], vert_arr[base+1], vert_arr[base+2], norm_arr[base], norm_arr[base+1], norm_arr[base+2], tc_arr[i*2], tc_arr[i*2+1])
+	}
+	fmt.eprintfln("  first 12 indices: %d %d %d %d %d %d %d %d %d %d %d %d", idx_arr[0], idx_arr[1], idx_arr[2], idx_arr[3], idx_arr[4], idx_arr[5], idx_arr[6], idx_arr[7], idx_arr[8], idx_arr[9], idx_arr[10], idx_arr[11])
+	max_idx := u16(0)
+	for i in 0..<len(idx_arr) {
+		if idx_arr[i] > max_idx { max_idx = idx_arr[i] }
+	}
+	fmt.eprintfln("  max index = %d (vc=%d, valid=%v)", max_idx, vc, max_idx < u16(vc))
+
+	rl.UploadMesh(&mesh, false)
+	current_track.mesh_model = rl.LoadModelFromMesh(mesh)
+}
+
+get_surface_at :: proc(pos: rl.Vector3) -> Surface {
+	if len(current_track.samples) == 0 {
+		return .Pavement
+	}
+	bpos := b3.Vec3{pos.x, pos.y, pos.z}
+	best_d := f32(1e10)
+	best_surface := Surface.Pavement
+
+	for s in current_track.samples {
+		d := b3.DistanceSquared(bpos, s.pos)
+		if d < best_d {
+			best_d = d
+			best_surface = s.surface
+		}
+	}
+
+	if best_d < ROAD_WIDTH * ROAD_WIDTH {
+		return best_surface
+	}
+	return .Pavement
+}
+
+get_track_points :: proc() -> []TrackControlPoint {
+	return current_track.points
 }
 
 get_start_position :: proc() -> rl.Vector3 {
@@ -148,38 +235,10 @@ get_track_finish :: proc() -> rl.Vector3 {
 	return current_track.finish_pos
 }
 
-piece_world_in :: proc(tile: Tile) -> b3.Vec3 {
-	return tile_world_origin(tile.gx, tile.gy, tile.gz)
+get_track_mesh_model :: proc() -> rl.Model {
+	return current_track.mesh_model
 }
 
-piece_world_out :: proc(tile: Tile) -> b3.Vec3 {
-	dx, dy, dz := template_grid_out(tile.template, tile.dy, tile.rotation)
-	return tile_world_origin(tile.gx + dx, tile.gy + dy, tile.gz + dz)
-}
-
-get_surface_at :: proc(pos: rl.Vector3) -> Surface {
-	bpos := b3.Vec3{pos.x, pos.y, pos.z}
-	best_dist := f32(1e10)
-	surface := Surface.Pavement
-
-	for piece in current_track.tiles {
-		origin := tile_world_origin(piece.gx, piece.gy, piece.gz)
-		dir_angle := f32(piece.rotation) * math.PI * 0.5
-		q_dir := b3.MakeQuatFromAxisAngle(b3.Vec3_axisY, dir_angle)
-
-		samples := generate_centerline(piece.template, piece.dy, context.temp_allocator)
-		for sample in samples {
-			world_pos := origin + b3.RotateVector(q_dir, sample.pos)
-			dist := b3.Distance(bpos, world_pos)
-			if dist < best_dist {
-				best_dist = dist
-				surface = piece.surface
-			}
-		}
-	}
-
-	if best_dist < ROAD_WIDTH {
-		return surface
-	}
-	return .Pavement
+get_track_spline :: proc() -> []b3.Vec3 {
+	return current_track.spline_pos
 }
