@@ -20,6 +20,7 @@ TickInputs :: struct {
 TelemetryTick :: struct {
 	using inputs: TickInputs,
 	pos_x:     f32,
+	pos_y:     f32,
 	pos_z:     f32,
 	speed:     f32,
 	surface:   Surface,
@@ -93,6 +94,7 @@ record_tick :: proc(inputs: TickInputs) {
 		brake = inputs.brake,
 		stance = stance,
 		pos_x = pos.x,
+		pos_y = pos.y,
 		pos_z = pos.z,
 		speed = speed,
 		surface = surface,
@@ -110,17 +112,18 @@ build_csv :: proc() -> string {
 	b := strings.builder_make()
 	defer strings.builder_destroy(&b)
 
-	strings.write_string(&b, "tick,steer,accelerate,brake,stance,pos_x,pos_z,speed,surface,effect,phase\n")
+	strings.write_string(&b, "tick,steer,accelerate,brake,stance,pos_x,pos_y,pos_z,speed,surface,effect,phase\n")
 
 	for i in 0 ..< telemetry.count {
 		t := telemetry.buffer[i]
-		fmt.sbprintf(&b, "%d,%f,%d,%d,%s,%f,%f,%f,%s,%s,%s\n",
+		fmt.sbprintf(&b, "%d,%f,%d,%d,%s,%f,%f,%f,%f,%s,%s,%s\n",
 			i,
 			t.steer,
 			t.accelerate ? 1 : 0,
 			t.brake ? 1 : 0,
 			stance_names[t.stance],
 			t.pos_x,
+			t.pos_y,
 			t.pos_z,
 			t.speed,
 			surface_names[t.surface],
@@ -164,6 +167,10 @@ save_csv_file :: proc(csv: string) {
 // Returns true while the race is active (not finished).
 tick :: proc() -> bool {
 	if state.race_phase == .Countdown {
+		simulate_broom(FIXED_DT)
+		b3.World_Step(state.world, FIXED_DT, 4)
+		sync_broom()
+		update_camera()
 		return true
 	}
 

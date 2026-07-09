@@ -1,5 +1,6 @@
 package main
 
+import "core:math"
 import "core:strings"
 import rl "vendor:raylib"
 import b3 "vendor:box3d"
@@ -111,21 +112,54 @@ draw_finish_line :: proc() {
 }
 
 draw_track :: proc() {
-	blocks := get_track_blocks()
-	for block in blocks {
-		surface_colors := [Surface]rl.Color{
-			.Dirt     = {120, 80, 40, 255},
-			.Pavement = {80, 80, 80, 255},
-			.Sand     = {180, 160, 100, 255},
-			.Grass    = {60, 140, 60, 255},
+	surface_colors := [Surface]rl.Color{
+		.Dirt     = {120, 80, 40, 255},
+		.Pavement = {80, 80, 80, 255},
+		.Sand     = {180, 160, 100, 255},
+		.Grass    = {60, 140, 60, 255},
+	}
+
+	tiles := get_tiles()
+	for tile in tiles {
+		col := surface_colors[tile.surface]
+		samples := generate_centerline(tile.template, tile.dy, context.temp_allocator)
+		if len(samples) < 2 { continue }
+
+		dir_angle := f32(tile.rotation) * math.PI * 0.5
+		q_tile := b3.MakeQuatFromAxisAngle(b3.Vec3_axisY, dir_angle)
+		origin := tile_world_origin(tile.gx, tile.gy, tile.gz)
+
+		n := len(samples)
+		for i in 0 ..< n - 1 {
+			p0 := samples[i].pos
+			p1 := samples[i + 1].pos
+
+			r0 := b3.RotateVector(q_tile, p0)
+			r1 := b3.RotateVector(q_tile, p1)
+
+			w0 := rl.Vector3{
+				origin[0] + r0[0],
+				origin[1] + r0[1],
+				origin[2] + r0[2],
+			}
+			w1 := rl.Vector3{
+				origin[0] + r1[0],
+				origin[1] + r1[1],
+				origin[2] + r1[2],
+			}
+
+			mid := rl.Vector3{
+				(w0.x + w1.x) / 2,
+				(w0.y + w1.y) / 2,
+				(w0.z + w1.z) / 2,
+			}
+
+			dx := w1.x - w0.x
+			dz := w1.z - w0.z
+			depth := math.sqrt(dx * dx + dz * dz)
+
+			rl.DrawCube(mid, ROAD_WIDTH, 0.4, depth, col)
 		}
-		col := surface_colors[block.surface]
-		half_w := block.width / 2
-		half_l := block.length / 2
-		cx := block.start.x + block.curvature * block.length * 0.3
-		cz := block.start.z + half_l
-		rl.DrawCube({cx, -0.5, cz}, block.width, 0.5, block.length, col)
-		rl.DrawCubeWires({cx, -0.5, cz}, block.width, 0.5, block.length, rl.BLACK)
 	}
 
 	checkpoints := get_checkpoints()
@@ -138,16 +172,19 @@ draw_broom :: proc() {
 	pos := get_broom_position()
 	fwd := get_broom_forward()
 
-	rl.DrawCube(pos, 0.1, 0.1, 0.6, rl.DARKBROWN)
-	rl.DrawCube(pos + fwd * 0.35, 0.15, 0.05, 0.1, {100, 60, 30, 255})
+	hover_y := pos.y + 0.6
+	hover_pos := rl.Vector3{pos.x, hover_y, pos.z}
 
-	rider_pos := pos - fwd * 0.15
+	rl.DrawCube(hover_pos, 0.1, 0.1, 0.6, rl.DARKBROWN)
+	rl.DrawCube(hover_pos + fwd * 0.35, 0.15, 0.05, 0.1, {100, 60, 30, 255})
+
+	rider_pos := hover_pos - fwd * 0.15
 	rider_pos.y += 0.2
 	rl.DrawCylinder(rider_pos, 0.02, 0.12, 0.25, 6, rl.DARKGREEN)
 
 	col := stance_colors[get_current_stance()]
 	col.a = 100
-	rl.DrawSphere(pos, 0.4, col)
+	rl.DrawSphere(hover_pos, 0.4, col)
 }
 
 restart_race :: proc() {
@@ -162,7 +199,6 @@ restart_race :: proc() {
 
 shutdown :: proc() {
 	finish_run()
-	b3.DestroyWorld(state.world)
 	rl.CloseAudioDevice()
 	rl.CloseWindow()
 }
