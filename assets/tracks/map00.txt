@@ -1,0 +1,38 @@
+# 17-block closed circuit using Kenney Racing Kit road pieces
+# 3 straights per side, 4 corners, 1 roadStart
+# Format: tile_type surface
+
+# Start/finish straight — heading +Z
+roadStraight pavement
+roadStraight pavement
+roadStraight pavement
+
+# Turn 1
+roadCornerSmall pavement
+
+# Section 2 — heading -X (dirt)
+roadStraight dirt
+roadStraight dirt
+roadStraight dirt
+
+# Turn 2
+roadCornerSmall dirt
+
+# Section 3 — heading -Z (sand + bump)
+roadStraight sand
+roadStraight sand
+roadBump sand
+
+# Turn 3
+roadCornerSmall sand
+
+# Section 4 — heading +X (grass)
+roadStraight grass
+roadStraight grass
+roadStraight grass
+
+# Turn 4 — back to origin
+roadCornerSmall pavement
+
+# Finish line (overlaps first straight tile)
+roadStart pavement

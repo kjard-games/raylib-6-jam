@@ -2,247 +2,275 @@ package main
 
 import "core:fmt"
 import "core:math"
+import "core:os"
+import "core:strings"
 import rl "vendor:raylib"
 import b3 "vendor:box3d"
 
-ROAD_THICKNESS :: f32(0.15)
+DEFAULT_TILE_SIZE :: 10.0
 
-WallType :: enum {
-	None,
-	Wall,
-	Curb,
-}
+// New kit models are at 1 unit = 1 meter scale; we render them at 10x
+// so they match the old kit's world-space footprint.
+TILE_RENDER_SCALE :: 10.0
 
-TrackControlPoint :: struct {
-	pos:       rl.Vector3,
+TrackBlock :: struct {
+	tile_name: string,
 	surface:   Surface,
-	wall_left:  WallType,
-	wall_right: WallType,
-	boost:     bool,
-	width:     f32,
-	bank:      f32,
 }
 
-SurfaceSample :: struct {
-	pos:     b3.Vec3,
-	surface: Surface,
+TileInstance :: struct {
+	tile_name:  string,
+	model_idx:  int,
+	class:      TileClass,
+	length:     f32,
+	pos:        rl.Vector3,
+	yaw:        f32,
+	surface:    Surface,
 }
 
 Track3D :: struct {
-	points:         []TrackControlPoint,
-	spline_pos:     []b3.Vec3,
-	mesh_model:     rl.Model,
-	collision_mesh: ^b3.MeshData,
-	samples:        []SurfaceSample,
+	blocks:         []TrackBlock,
+	instances:      []TileInstance,
+	models:         []rl.Model,
+	model_paths:    []string,
+	colormap:       rl.Texture2D,
+	motorcycle:     rl.Model,
+	collision_body: b3.BodyId,
 	start_pos:      rl.Vector3,
 	finish_pos:     rl.Vector3,
 }
 
 current_track: Track3D
 
-RENDER_SAMPLES_PER_SEG   :: 32
-SURFACE_SAMPLES_PER_SEG  :: 16
-COLLISION_SAMPLES_PER_SEG :: 8
-
-get_track_attribs :: proc(segment: int, t: f32) -> (width: f32, bank: f32) {
-	pts := current_track.points
-	n := len(pts)
-	seg := clamp(segment, 0, n - 2)
-	w0 := pts[seg].width
-	w1 := pts[min(seg + 1, n - 1)].width
-	b0 := pts[seg].bank
-	b1 := pts[min(seg + 1, n - 1)].bank
-	width = w0 + (w1 - w0) * t
-	bank  = b0 + (b1 - b0) * t
-	return
-}
-
-init_track :: proc() {
-	points := build_map00()
-	current_track.points = points
-	n := len(points)
-
-	current_track.start_pos = points[0].pos
-	last := points[n-1]
-	current_track.finish_pos = last.pos
-
-	fmt.eprintfln("init_track: %d points, start=(%v) finish=(%v)", n, current_track.start_pos, current_track.finish_pos)
-	for i in 0..<n {
-		fmt.eprintfln("  pt[%d] pos=(%v) surface=%v width=%.1f bank=%.2f", i, points[i].pos, points[i].surface, points[i].width, points[i].bank)
-	}
-
-	raw_pos := make([]b3.Vec3, n)
-	for i in 0..<n {
-		raw_pos[i] = b3.Vec3(points[i].pos)
-	}
-	current_track.spline_pos = make_catmull_rom_points(raw_pos)
-	fmt.eprintfln("init_track: spline has %d points (including ghosts)", len(current_track.spline_pos))
-
-	build_surface_samples(current_track.spline_pos)
-	build_track_model(current_track.spline_pos)
-}
-
-build_surface_samples :: proc(spline_pos: []b3.Vec3) {
-	n := len(current_track.points)
-	num_segs := n - 1
-	total := num_segs * SURFACE_SAMPLES_PER_SEG + 1
-	samples := make([]SurfaceSample, total)
-
-	idx := 0
-	for seg in 0..<num_segs {
-		cp := current_track.points[seg]
-		for s in 0..<SURFACE_SAMPLES_PER_SEG {
-			t := f32(s) / f32(SURFACE_SAMPLES_PER_SEG)
-			_, bank := get_track_attribs(seg, t)
-			pos, _, _, _ := get_road_frame(spline_pos, seg, t, bank)
-			samples[idx] = SurfaceSample{pos = pos, surface = cp.surface}
-			idx += 1
-		}
-	}
-	last := current_track.points[n-1]
-	samples[idx] = SurfaceSample{pos = b3.Vec3(last.pos), surface = last.surface}
-	current_track.samples = samples
-}
-
-build_track_model :: proc(spline_pos: []b3.Vec3) {
-	n := len(current_track.points)
-	num_segs := n - 1
-	total_samples := num_segs * RENDER_SAMPLES_PER_SEG + 1
-
-	vc := total_samples * 2
-	tc := (total_samples - 1) * 2
-
-	vert_arr := make([]f32, vc * 3)
-	norm_arr := make([]f32, vc * 3)
-	tc_arr := make([]f32, vc * 2)
-	col_arr := make([]u8, vc * 4)
-	idx_arr := make([]u16, tc * 3)
-
-	surface_colors := [Surface]rl.Color{
-		.Dirt     = {120, 80, 40, 255},
-		.Pavement = {80, 80, 80, 255},
-		.Sand     = {180, 160, 100, 255},
-		.Grass    = {60, 140, 60, 255},
-	}
-
-	vi := 0
-	for seg in 0..<num_segs {
-		cp := current_track.points[seg]
-		col := surface_colors[cp.surface]
-
-		for s in 0..<RENDER_SAMPLES_PER_SEG {
-			t := f32(s) / f32(RENDER_SAMPLES_PER_SEG)
-			width, bank := get_track_attribs(seg, t)
-			hw := width * 0.5
-			pos, fwd, right, norm := get_road_frame(spline_pos, seg, t, bank)
-
-			left_v := pos - right * hw
-			right_v := pos + right * hw
-
-			right_side := [2]bool{false, true}
-			for is_right in right_side {
-				p := right_v if is_right else left_v
-				base := vi * 3
-				vert_arr[base+0] = p.x; vert_arr[base+1] = p.y; vert_arr[base+2] = p.z
-				norm_arr[base+0] = norm.x; norm_arr[base+1] = norm.y; norm_arr[base+2] = norm.z
-				cb := vi * 4
-				col_arr[cb+0] = col.r; col_arr[cb+1] = col.g; col_arr[cb+2] = col.b; col_arr[cb+3] = col.a
-				tc_arr[vi*2+0] = 1.0 if is_right else 0.0
-				tc_arr[vi*2+1] = f32(seg) + t
-				vi += 1
-			}
-		}
-	}
-
-	last_width, last_bank := get_track_attribs(num_segs-1, 1.0)
-	last_hw := last_width * 0.5
-	pos, fwd, right, norm := get_road_frame(spline_pos, num_segs-1, 1.0, last_bank)
-	last_cp := current_track.points[n-1]
-	col := surface_colors[last_cp.surface]
-	left_v := pos - right * last_hw
-	right_v := pos + right * last_hw
-	side_ends := [2]bool{false, true}
-	for is_right in side_ends {
-		p := right_v if is_right else left_v
-		base := vi * 3
-		vert_arr[base+0] = p.x; vert_arr[base+1] = p.y; vert_arr[base+2] = p.z
-		norm_arr[base+0] = norm.x; norm_arr[base+1] = norm.y; norm_arr[base+2] = norm.z
-		cb := vi * 4
-		col_arr[cb+0] = col.r; col_arr[cb+1] = col.g; col_arr[cb+2] = col.b; col_arr[cb+3] = col.a
-		tc_arr[vi*2+0] = 1.0 if is_right else 0.0
-		tc_arr[vi*2+1] = f32(num_segs)
-		vi += 1
-	}
-
-	ii := 0
-	for i in 0..<total_samples - 1 {
-		a := i * 2
-		b := a + 1
-		c := (i + 1) * 2
-		d := c + 1
-		idx_arr[ii+0] = u16(a)
-		idx_arr[ii+1] = u16(b)
-		idx_arr[ii+2] = u16(c)
-		idx_arr[ii+3] = u16(c)
-		idx_arr[ii+4] = u16(b)
-		idx_arr[ii+5] = u16(d)
-		ii += 6
-	}
-
-	mesh := rl.Mesh{
-		vertexCount   = i32(vc),
-		triangleCount = i32(tc),
-		vertices      = raw_data(vert_arr),
-		normals       = raw_data(norm_arr),
-		texcoords     = raw_data(tc_arr),
-		colors        = raw_data(col_arr),
-		indices       = raw_data(idx_arr),
-	}
-
-	fmt.eprintfln("build_track_model: vc=%d tc=%d", vc, tc)
-	for i in 0..<min(6, vc) {
-		base := i * 3
-		fmt.eprintfln("  vert[%d] = (%f %f %f) norm=(%f %f %f) tc=(%f %f)", i, vert_arr[base], vert_arr[base+1], vert_arr[base+2], norm_arr[base], norm_arr[base+1], norm_arr[base+2], tc_arr[i*2], tc_arr[i*2+1])
-	}
-	for i := max(0, vc-4); i < vc; i += 1 {
-		base := i * 3
-		fmt.eprintfln("  vert[%d] = (%f %f %f) norm=(%f %f %f) tc=(%f %f)", i, vert_arr[base], vert_arr[base+1], vert_arr[base+2], norm_arr[base], norm_arr[base+1], norm_arr[base+2], tc_arr[i*2], tc_arr[i*2+1])
-	}
-	fmt.eprintfln("  first 12 indices: %d %d %d %d %d %d %d %d %d %d %d %d", idx_arr[0], idx_arr[1], idx_arr[2], idx_arr[3], idx_arr[4], idx_arr[5], idx_arr[6], idx_arr[7], idx_arr[8], idx_arr[9], idx_arr[10], idx_arr[11])
-	max_idx := u16(0)
-	for i in 0..<len(idx_arr) {
-		if idx_arr[i] > max_idx { max_idx = idx_arr[i] }
-	}
-	fmt.eprintfln("  max index = %d (vc=%d, valid=%v)", max_idx, vc, max_idx < u16(vc))
-
-	rl.UploadMesh(&mesh, false)
-	current_track.mesh_model = rl.LoadModelFromMesh(mesh)
-}
-
-get_surface_at :: proc(pos: rl.Vector3) -> Surface {
-	if len(current_track.samples) == 0 {
-		return .Pavement
-	}
-	bpos := b3.Vec3{pos.x, pos.y, pos.z}
-	best_d := f32(1e10)
-	best_surface := Surface.Pavement
-
-	for s in current_track.samples {
-		d := b3.DistanceSquared(bpos, s.pos)
-		if d < best_d {
-			best_d = d
-			best_surface = s.surface
-		}
-	}
-
-	if best_d < 500.0 {
-		return best_surface
+parse_surface :: proc(s: string) -> Surface {
+	switch s {
+	case "dirt":     return .Dirt
+	case "pavement": return .Pavement
+	case "sand":     return .Sand
+	case "grass":    return .Grass
 	}
 	return .Pavement
 }
 
-get_track_points :: proc() -> []TrackControlPoint {
-	return current_track.points
+init_track :: proc() {
+	tile_registry := register_tiles()
+	defer delete(tile_registry)
+
+	ok: bool
+	track_path := "assets/tracks/map00.txt"
+	data, read_ok := os.read_entire_file_from_path(track_path, context.temp_allocator)
+	if read_ok != nil {
+		fmt.eprintfln("ERROR: cannot read track file %s", track_path)
+		return
+	}
+	text := string(data)
+
+	path_order := make([dynamic]string)
+	defer delete(path_order)
+	path_map := make(map[string]int)
+	defer delete(path_map)
+
+	blocks := make([dynamic]TrackBlock)
+
+	for line in strings.split_lines_iterator(&text) {
+		line := strings.trim_space(line)
+		if line == "" || strings.has_prefix(line, "#") {
+			continue
+		}
+
+		parts := strings.fields(line)
+		if len(parts) < 2 {
+			fmt.eprintfln("WARN: skipping bad line: %s", line)
+			continue
+		}
+
+		tile_name := parts[0]
+		surface := parse_surface(parts[1])
+
+		def, has_def := tile_registry[tile_name]
+		if !has_def {
+			fmt.eprintfln("WARN: unknown tile type '%s', skipping", tile_name)
+			continue
+		}
+
+		if _, exists := path_map[def.model_path]; !exists {
+			path_map[def.model_path] = len(path_order)
+			append(&path_order, strings.clone(def.model_path))
+		}
+		append(&blocks, TrackBlock{tile_name = strings.clone(tile_name), surface = surface})
+	}
+
+	current_track.blocks = blocks[:]
+
+	// Load colormap for old kenney_racing models
+	colormap := rl.LoadTexture("assets/kenney_racing/models/Textures/colormap.png")
+	current_track.colormap = colormap
+
+	// Load models into array (indexed by position in path_order)
+	n_models := len(path_order)
+	models := make([]rl.Model, n_models)
+	for i in 0 ..< n_models {
+		path := path_order[i]
+		cpath := strings.clone_to_cstring(path, context.temp_allocator)
+		model := rl.LoadModel(cpath)
+		for mi in 0 ..< model.materialCount {
+			mat := model.materials[mi]
+			if mat.maps[rl.MaterialMapIndex.ALBEDO].texture.id == 0 {
+				rl.SetMaterialTexture(&model.materials[mi], .ALBEDO, colormap)
+			}
+		}
+		models[i] = model
+	}
+	current_track.models = models
+	current_track.model_paths = path_order[:]
+
+	// Motorcycle
+	mc := rl.LoadModel("assets/kenney_racing/models/vehicle-motorcycle.glb")
+	for mi in 0 ..< mc.materialCount {
+		if mc.materials[mi].maps[rl.MaterialMapIndex.ALBEDO].texture.id == 0 {
+			rl.SetMaterialTexture(&mc.materials[mi], .ALBEDO, colormap)
+		}
+	}
+	current_track.motorcycle = mc
+
+	compute_tile_instances(tile_registry, path_map)
+
+	if len(current_track.instances) > 0 {
+		current_track.start_pos = get_tile_world_pos(0)
+	}
+	for i := len(current_track.blocks) - 1; i >= 0; i -= 1 {
+		def, has_def := tile_registry[current_track.blocks[i].tile_name]
+		if has_def && def.class == .Start {
+			current_track.finish_pos = get_tile_world_pos(i)
+			break
+		}
+	}
+
+	build_track_collision(tile_registry)
+
+	fmt.eprintfln("init_track: %d blocks, %d instances", len(current_track.blocks), len(current_track.instances))
+	fmt.eprintfln("  start=(%v) finish=(%v)", current_track.start_pos, current_track.finish_pos)
+}
+
+compute_tile_instances :: proc(registry: TileRegistry, path_map: map[string]int) {
+	blocks := current_track.blocks
+	n := len(blocks)
+	instances := make([]TileInstance, n)
+
+	pos := rl.Vector3{0, 0, 0}
+	yaw := f32(0)
+
+	for i in 0 ..< n {
+		block := blocks[i]
+		def := registry[block.tile_name]
+
+		instances[i] = TileInstance{
+			tile_name = strings.clone(block.tile_name),
+			model_idx = path_map[def.model_path],
+			class     = def.class,
+			length    = def.length,
+			pos       = pos,
+			yaw       = yaw,
+			surface   = block.surface,
+		}
+
+		rad := yaw * math.PI / 180.0
+		fwd := rl.Vector3{-math.sin(rad), 0, math.cos(rad)}
+		right := rl.Vector3{math.cos(rad), 0, math.sin(rad)}
+
+		switch def.class {
+		case .Straight, .Start:
+			pos += fwd * def.length
+		case .CornerRight:
+			pos += right * def.length
+			yaw += 90
+		case .CornerLeft:
+			pos -= right * def.length
+			yaw -= 90
+		case .Crossing:
+		}
+	}
+
+	current_track.instances = instances
+}
+
+get_tile_world_pos :: proc(block_idx: int) -> rl.Vector3 {
+	if block_idx >= len(current_track.instances) {
+		return {}
+	}
+	inst := current_track.instances[block_idx]
+	rad := inst.yaw * math.PI / 180.0
+	fwd := rl.Vector3{-math.sin(rad), 0, math.cos(rad)}
+	return inst.pos + fwd * (inst.length * 0.5)
+}
+
+build_track_collision :: proc(registry: TileRegistry) {
+	track_def := b3.DefaultBodyDef()
+	track_def.type = b3.BodyType.staticBody
+	track_body := b3.CreateBody(state.world, track_def)
+
+	shape_def := b3.DefaultShapeDef()
+	shape_def.baseMaterial.friction = 0.6
+
+	for inst in current_track.instances {
+		rad := inst.yaw * math.PI / 180.0
+		rot := b3.MakeQuatFromAxisAngle(b3.Vec3{0, 1, 0}, rad)
+		// Place hull below the visual model surface
+		xf := b3.Transform{p = {inst.pos.x, -0.5, inst.pos.z}, q = rot}
+		hull := b3.MakeTransformedBoxHull(inst.length, 0.25, 3, xf)
+		_ = b3.CreateHullShape(track_body, shape_def, &hull.base)
+	}
+
+	fmt.eprintfln("build_track_collision: %d tile hulls", len(current_track.instances))
+
+	current_track.collision_body = track_body
+
+	// Finish sensor
+	blocks := current_track.blocks
+	instances := current_track.instances
+	n := len(instances)
+	finish_idx := -1
+	for i := n - 1; i >= 0; i -= 1 {
+		def, has_def := registry[blocks[i].tile_name]
+		if has_def && def.class == .Start {
+			finish_idx = i
+			break
+		}
+	}
+	if finish_idx >= 0 {
+		inst := instances[finish_idx]
+		rad := inst.yaw * math.PI / 180.0
+		fwd := b3.Vec3{-math.sin(rad), 0, math.cos(rad)}
+		center := b3.Vec3{inst.pos.x, 0, inst.pos.z} + fwd * (inst.length * 0.5)
+
+		finish_q := b3.MakeQuatFromAxisAngle({0, 1, 0}, rad)
+		finish_xf := b3.Transform{p = center, q = finish_q}
+
+		sensor_def := b3.DefaultShapeDef()
+		sensor_def.isSensor = true
+		sensor_def.enableSensorEvents = true
+		finish_hull := b3.MakeTransformedBoxHull(inst.length * 0.4, 2.5, 0.5, finish_xf)
+		state.finish_sensor = b3.CreateHullShape(track_body, sensor_def, &finish_hull.base)
+	}
+}
+
+get_surface_at :: proc(pos: rl.Vector3) -> Surface {
+	if !b3.Body_IsValid(current_track.collision_body) {
+		return .Pavement
+	}
+	origin := b3.Vec3{pos.x, pos.y + 5, pos.z}
+	translation := b3.Vec3{0, -15, 0}
+
+	filter := b3.QueryFilter{
+		categoryBits = 0xFFFF,
+		maskBits     = 0xFFFF,
+	}
+
+	result := b3.World_CastRayClosest(state.world, origin, translation, filter)
+	if result.hit {
+		return Surface(result.userMaterialId)
+	}
+	return .Pavement
 }
 
 get_start_position :: proc() -> rl.Vector3 {
@@ -253,10 +281,64 @@ get_track_finish :: proc() -> rl.Vector3 {
 	return current_track.finish_pos
 }
 
-get_track_mesh_model :: proc() -> rl.Model {
-	return current_track.mesh_model
+draw_track :: proc() {
+	for inst in current_track.instances {
+		model := current_track.models[inst.model_idx]
+		if model.meshes == nil { continue }
+
+		s := f32(TILE_RENDER_SCALE)
+		scale_x := s
+		if inst.class == .CornerLeft {
+			scale_x = -s
+		}
+
+		if debug.wireframe {
+			rl.DrawModelEx(model, inst.pos, {0, 1, 0}, inst.yaw, {scale_x, s, s}, rl.WHITE)
+		} else {
+			rl.DrawModelEx(model, inst.pos, {0, 1, 0}, inst.yaw, {scale_x, s, s}, rl.WHITE)
+		}
+	}
+
+	if debug.show_origin {
+		for i in 0 ..< len(current_track.instances) {
+			inst := current_track.instances[i]
+			col := rl.Color{255, u8(100 + 50 * i % 100), 0, 255}
+			rl.DrawSphere(inst.pos, 0.3, col)
+
+			rad := inst.yaw * math.PI / 180.0
+			fwd := rl.Vector3{-math.sin(rad), 0, math.cos(rad)}
+			rl.DrawCylinderEx(inst.pos, inst.pos + fwd * 2, 0.1, 0.1, 4, col)
+		}
+	}
 }
 
-get_track_spline :: proc() -> []b3.Vec3 {
-	return current_track.spline_pos
+draw_motorcycle :: proc(pos: rl.Vector3, fwd: rl.Vector3, steer: f32, speed: f32) {
+	model := current_track.motorcycle
+	if model.meshes == nil {return}
+
+	yaw_rad := math.atan2(fwd.x, fwd.z)
+	lean_factor := clamp(speed / 15.0, 0.0, 1.0)
+	lean_rad := -steer * 0.21 * lean_factor
+
+	yaw_q := b3.MakeQuatFromAxisAngle(b3.Vec3{0, 1, 0}, yaw_rad)
+	fwd_b3 := b3.Vec3{fwd.x, fwd.y, fwd.z}
+	lean_q := b3.MakeQuatFromAxisAngle(fwd_b3, lean_rad)
+	q := b3.MulQuat(yaw_q, lean_q)
+
+	x2 := q.x + q.x; y2 := q.y + q.y; z2 := q.z + q.z
+	xx := q.x * x2; xy := q.x * y2; xz := q.x * z2
+	yy := q.y * y2; yz := q.y * z2; zz := q.z * z2
+	wx := q.w * x2; wy := q.w * y2; wz := q.w * z2
+
+	transform := rl.Matrix {
+		1 - (yy + zz),       xy + wz,            xz - wy,            pos.x,
+		xy - wz,            1 - (xx + zz),        yz + wx,            pos.y,
+		xz + wy,             yz - wx,            1 - (xx + yy),       pos.z,
+		0,                  0,                   0,                  1,
+	}
+
+	for mi in 0 ..< model.meshCount {
+		mat := model.materials[model.meshMaterial[mi]]
+		rl.DrawMesh(model.meshes[mi], mat, transform)
+	}
 }

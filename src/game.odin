@@ -2,7 +2,6 @@ package main
 
 import "core:strings"
 import rl "vendor:raylib"
-import rlgl "vendor:raylib/rlgl"
 import b3 "vendor:box3d"
 
 WIDTH  :: 720
@@ -45,6 +44,7 @@ init :: proc() {
 	state.world = b3.CreateWorld(world_def)
 
 	init_track()
+	init_audio()
 	init_stance()
 	init_time()
 	init_broom()
@@ -73,6 +73,9 @@ update :: proc() -> bool {
 	dt := rl.GetFrameTime()
 	telemetry.accumulator += dt
 
+	fmt.eprintfln("frame %d", state.frame_count)
+	state.frame_count += 1
+
 	if rl.IsKeyPressed(.TAB) || rl.IsKeyPressed(.R) {
 		restart_race()
 	}
@@ -87,6 +90,7 @@ update :: proc() -> bool {
 		if state.countdown <= 0 {
 			state.race_phase = .Racing
 			state.countdown = 0
+			start_engine()
 		}
 	}
 
@@ -140,65 +144,21 @@ update :: proc() -> bool {
 
 draw_finish_line :: proc() {
 	finish := get_track_finish()
-	pts := get_track_points()
-	fw := pts[len(pts)-1].width
-	rl.DrawCube(finish + {0, -0.2, 0}, fw, 0.5, 0.2, rl.WHITE)
-	rl.DrawCube(finish + {0, 0.3, 0}, fw, 0.1, 0.2, {200, 200, 200, 255})
-}
-
-draw_track :: proc() {
-	model := get_track_mesh_model()
-	if model.meshes == nil {
-		rl.DrawText("NO MESH", 10, 80, 14, rl.RED)
-		return
-	}
-	m := model.meshes[0]
-	rl.DrawText(rl.TextFormat("verts=%d tris=%d", m.vertexCount, m.triangleCount), 10, 80, 14, rl.RED)
-
-	cam := state.camera
-	start := get_start_position()
-	finish := get_track_finish()
-	rl.DrawText(rl.TextFormat("cam=(%.1f,%.1f,%.1f) tgt=(%.1f,%.1f,%.1f)", cam.position.x, cam.position.y, cam.position.z, cam.target.x, cam.target.y, cam.target.z), 10, 95, 14, rl.YELLOW)
-	rl.DrawText(rl.TextFormat("start=(%.1f,%.1f,%.1f)", start.x, start.y, start.z), 10, 110, 14, rl.YELLOW)
-	rl.DrawText(rl.TextFormat("finish=(%.1f,%.1f,%.1f)", finish.x, finish.y, finish.z), 10, 125, 14, rl.YELLOW)
-	rl.DrawText(rl.TextFormat("dbg: [V]wf=%v [C]nocull=%v [G]grid=%v [T]test=%v [N]solid", debug.wireframe, debug.no_cull, debug.show_origin, debug.show_test), 10, 140, 14, rl.LIME)
-	rl.DrawText(rl.TextFormat("vaoId=%d vboId[0]=%d", model.meshes[0].vaoId, model.meshes[0].vboId[0] if model.meshes[0].vboId != nil else 0), 10, 155, 14, rl.ORANGE)
-
-	if debug.no_cull {
-		rlgl.DisableBackfaceCulling()
-	}
-	defer if debug.no_cull {
-		rlgl.EnableBackfaceCulling()
-	}
-
-	if debug.wireframe {
-		rl.DrawModelWires(model, {0, 0, 0}, 1, rl.WHITE)
-	} else {
-		rl.DrawModel(model, {0, 0, 0}, 1, rl.WHITE)
-	}
+	rl.DrawCube(finish + {0, -0.2, 0}, DEFAULT_TILE_SIZE * 0.8, 0.5, 0.2, rl.WHITE)
+	rl.DrawCube(finish + {0, 0.3, 0}, DEFAULT_TILE_SIZE * 0.8, 0.1, 0.2, {200, 200, 200, 255})
 }
 
 draw_broom :: proc() {
 	pos := get_broom_position()
 	fwd := get_broom_forward()
-
-	hover_y := pos.y + 0.6
-	hover_pos := rl.Vector3{pos.x, hover_y, pos.z}
-
-	rl.DrawCube(hover_pos, 0.1, 0.1, 0.6, rl.DARKBROWN)
-	rl.DrawCube(hover_pos + fwd * 0.35, 0.15, 0.05, 0.1, {100, 60, 30, 255})
-
-	rider_pos := hover_pos - fwd * 0.15
-	rider_pos.y += 0.2
-	rl.DrawCylinder(rider_pos, 0.02, 0.12, 0.25, 6, rl.DARKGREEN)
-
-	col := stance_colors[get_current_stance()]
-	col.a = 100
-	rl.DrawSphere(hover_pos, 0.4, col)
+	steer := controls_state.steer
+	speed := get_broom_speed()
+	draw_motorcycle(pos, fwd, steer, speed)
 }
 
 restart_race :: proc() {
 	finish_run()
+	stop_engine()
 	reset_broom()
 	init_stance()
 	init_time()
@@ -209,11 +169,22 @@ restart_race :: proc() {
 
 shutdown :: proc() {
 	finish_run()
-	b3.DestroyWorld(state.world)
-	if current_track.collision_mesh != nil {
-		b3.DestroyMesh(current_track.collision_mesh)
-		current_track.collision_mesh = nil
+	stop_engine()
+	shutdown_audio()
+
+	for i in 0 ..< len(current_track.models) {
+		rl.UnloadModel(current_track.models[i])
 	}
+	delete(current_track.models)
+	delete(current_track.model_paths)
+	rl.UnloadModel(current_track.motorcycle)
+	rl.UnloadTexture(current_track.colormap)
+
+	b3.DestroyWorld(state.world)
+
+	delete(current_track.blocks)
+	delete(current_track.instances)
+
 	rl.UnloadModel(debug_test_model)
 	rl.CloseAudioDevice()
 	rl.CloseWindow()
