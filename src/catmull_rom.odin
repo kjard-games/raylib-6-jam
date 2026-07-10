@@ -1,5 +1,6 @@
 package main
 
+import "core:math"
 import b3 "vendor:box3d"
 
 // Builds ghost-points array for an open Catmull-Rom spline from N control points.
@@ -41,7 +42,8 @@ catmull_rom_derivative :: proc(p: []b3.Vec3, segment: int, t: f32) -> b3.Vec3 {
 }
 
 // Returns the frame (pos, forward, right, normal) along the road at a spline sample.
-get_road_frame :: proc(spline_pos: []b3.Vec3, segment: int, t: f32) -> (pos, forward, right, normal: b3.Vec3) {
+// bank: positive = right side lower (tilts normal to the left), in radians.
+get_road_frame :: proc(spline_pos: []b3.Vec3, segment: int, t: f32, bank: f32 = 0) -> (pos, forward, right, normal: b3.Vec3) {
 	pos = catmull_rom_eval(spline_pos, segment, t)
 	forward = catmull_rom_derivative(spline_pos, segment, t)
 	fl := b3.Length(forward)
@@ -53,6 +55,15 @@ get_road_frame :: proc(spline_pos: []b3.Vec3, segment: int, t: f32) -> (pos, for
 	up := b3.Vec3{0, 1, 0}
 	right = b3.Normalize(b3.Cross(up, forward))
 	normal = b3.Normalize(b3.Cross(forward, right))
+
+	if bank != 0 {
+		cb := math.cos(bank)
+		sb := math.sin(bank)
+		r := right
+		n := normal
+		right  = cb * r + sb * n
+		normal = -sb * r + cb * n
+	}
 	return
 }
 

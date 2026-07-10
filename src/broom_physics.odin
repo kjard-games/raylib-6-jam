@@ -6,11 +6,12 @@ import "core:math"
 import rl "vendor:raylib"
 import b3 "vendor:box3d"
 
-ACCEL_FORCE :: 300.0
-BRAKE_FORCE :: 460.0
-ACCEL_MULT :: 1.35
-DRIFT_TURN_MULT :: 1.6
-TURN_SPEED_BASE :: 1.8
+ACCEL_FORCE :: 600.0
+BRAKE_FORCE :: 900.0
+ACCEL_MULT :: 1.5
+DRIFT_TURN_MULT :: 1.8
+TURN_SPEED_BASE :: 3.0
+DRAG_COEFF :: 0.15
 
 BroomState :: struct {
 	body_id:  b3.BodyId,
@@ -27,8 +28,8 @@ init_broom :: proc() {
 	def := b3.DefaultBodyDef()
 	def.position = {pos.x, pos.y, pos.z}
 	def.type = b3.BodyType.dynamicBody
-	def.linearDamping = 0.33
-	def.angularDamping = 2.0
+	def.linearDamping = 0.10
+	def.angularDamping = 1.5
 	def.motionLocks = {angularX = true, angularZ = true}
 	def.isAwake = true
 	def.enableSleep = false
@@ -63,7 +64,6 @@ build_track_collision :: proc() {
 	track_body := b3.CreateBody(state.world, track_def)
 
 	num_segs := n - 1
-	hw := ROAD_WIDTH * 0.5
 
 	// --- Road mesh shape ---
 	total_samples := num_segs * COLLISION_SAMPLES_PER_SEG + 1
@@ -78,15 +78,19 @@ build_track_collision :: proc() {
 	for seg in 0..<num_segs {
 		for s in 0..<COLLISION_SAMPLES_PER_SEG {
 			t := f32(s) / f32(COLLISION_SAMPLES_PER_SEG)
-			pos, fwd, right, _ := get_road_frame(spline_pos, seg, t)
-			verts[vi] = pos + right * hw
-			verts[vi+1] = pos - right * hw
+			width, bank := get_track_attribs(seg, t)
+			hw := width * 0.5
+			pos, fwd, right, _ := get_road_frame(spline_pos, seg, t, bank)
+			verts[vi] = pos - right * hw
+			verts[vi+1] = pos + right * hw
 			vi += 2
 		}
 	}
-	pos, fwd, right, _ := get_road_frame(spline_pos, num_segs-1, 1.0)
-	verts[vi] = pos + right * hw
-	verts[vi+1] = pos - right * hw
+	last_width, last_bank := get_track_attribs(num_segs-1, 1.0)
+	last_hw := last_width * 0.5
+	pos, fwd, right, _ := get_road_frame(spline_pos, num_segs-1, 1.0, last_bank)
+	verts[vi] = pos - right * last_hw
+	verts[vi+1] = pos + right * last_hw
 	fmt.eprintfln("  collision first 4 verts: (%v) (%v) (%v) (%v)", verts[0], verts[1], verts[2], verts[3])
 	fmt.eprintfln("  collision last 4 verts: (%v) (%v) (%v) (%v)", verts[vc-4], verts[vc-3], verts[vc-2], verts[vc-1])
 
@@ -97,10 +101,10 @@ build_track_collision :: proc() {
 		c := i32((i + 1) * 2)
 		d := c + 1
 		indices[ii+0] = a
-		indices[ii+1] = b
-		indices[ii+2] = c
-		indices[ii+3] = c
-		indices[ii+4] = b
+		indices[ii+1] = c
+		indices[ii+2] = b
+		indices[ii+3] = b
+		indices[ii+4] = c
 		indices[ii+5] = d
 		ii += 6
 	}
@@ -153,14 +157,14 @@ build_track_collision :: proc() {
 	delete(mat_indices)
 
 	// --- Finish line sensor ---
-	finish_pos, finish_fwd, finish_right, _ := get_road_frame(spline_pos, num_segs-1, 1.0)
+	finish_pos, finish_fwd, finish_right, _ := get_road_frame(spline_pos, num_segs-1, 1.0, last_bank)
 	finish_q := make_quat_from_road_frame(finish_fwd, finish_right)
 	finish_xf := b3.Transform{p = finish_pos, q = finish_q}
 
 	sensor_def := b3.DefaultShapeDef()
 	sensor_def.isSensor = true
 	sensor_def.enableSensorEvents = true
-	finish_hull := b3.MakeTransformedBoxHull(hw, 2.5, 0.5, finish_xf)
+	finish_hull := b3.MakeTransformedBoxHull(last_hw, 2.5, 0.5, finish_xf)
 	state.finish_sensor = b3.CreateHullShape(track_body, sensor_def, &finish_hull.base)
 
 	// --- Wall box hulls ---
@@ -171,8 +175,10 @@ build_track_collision :: proc() {
 		for s in 0..<COLLISION_SAMPLES_PER_SEG {
 			t := f32(s) / f32(COLLISION_SAMPLES_PER_SEG)
 			next_t := min(t + 1.0 / f32(COLLISION_SAMPLES_PER_SEG), 1.0)
+			width, bank := get_track_attribs(seg, t)
+			hw := width * 0.5
 
-			pos, fwd, right, _ := get_road_frame(spline_pos, seg, t)
+			pos, fwd, right, _ := get_road_frame(spline_pos, seg, t, bank)
 			next_pos := catmull_rom_eval(spline_pos, seg, next_t)
 
 			mid := (pos + next_pos) * 0.5
@@ -181,7 +187,7 @@ build_track_collision :: proc() {
 			xf := b3.Transform{p = mid, q = q}
 
 			if cp.wall_left != .None {
-				lp := mid + right * hw
+				lp := mid - right * hw
 				wh := f32(8.0) if cp.wall_left == .Wall else f32(0.4)
 				ww := f32(0.5) if cp.wall_left == .Wall else f32(0.3)
 				w_xf := b3.Transform{p = lp + b3.Vec3{0, wh * 0.5, 0}, q = q}
@@ -189,7 +195,7 @@ build_track_collision :: proc() {
 				_ = b3.CreateHullShape(track_body, wall_shape_def, &wbox.base)
 			}
 			if cp.wall_right != .None {
-				rp := mid - right * hw
+				rp := mid + right * hw
 				wh := f32(8.0) if cp.wall_right == .Wall else f32(0.4)
 				ww := f32(0.5) if cp.wall_right == .Wall else f32(0.3)
 				w_xf := b3.Transform{p = rp + b3.Vec3{0, wh * 0.5, 0}, q = q}
@@ -215,7 +221,7 @@ simulate_broom :: proc(dt: f32) {
 	accelerating := controls_state.accelerate
 	braking := controls_state.brake
 
-	turn_speed := TURN_SPEED_BASE * clamp(current_speed / 5.0, 0.3, 1.0)
+	turn_speed := TURN_SPEED_BASE * profile.grip * clamp(current_speed / 15.0, 0.2, 1.0)
 	if effect == .Drift {
 		turn_speed *= DRIFT_TURN_MULT
 	}
@@ -247,7 +253,11 @@ simulate_broom :: proc(dt: f32) {
 		forward_force = {-fwd.x * BRAKE_FORCE * drift_mult, 0, -fwd.z * BRAKE_FORCE * drift_mult}
 	}
 
-	b3.Body_ApplyForceToCenter(body, forward_force, true)
+	// Drag force: quadratic speed-dependent resistance
+	drag_mag := profile.drag * DRAG_COEFF * current_speed * current_speed
+	drag_force := b3.Vec3{-fwd.x * drag_mag, 0, -fwd.z * drag_mag}
+
+	b3.Body_ApplyForceToCenter(body, forward_force + drag_force, true)
 
 	broom_state.speed = current_speed
 }

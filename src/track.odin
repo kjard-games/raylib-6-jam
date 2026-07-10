@@ -1,10 +1,10 @@
 package main
 
 import "core:fmt"
+import "core:math"
 import rl "vendor:raylib"
 import b3 "vendor:box3d"
 
-ROAD_WIDTH     :: f32(10.0)
 ROAD_THICKNESS :: f32(0.15)
 
 WallType :: enum {
@@ -19,6 +19,8 @@ TrackControlPoint :: struct {
 	wall_left:  WallType,
 	wall_right: WallType,
 	boost:     bool,
+	width:     f32,
+	bank:      f32,
 }
 
 SurfaceSample :: struct {
@@ -42,6 +44,19 @@ RENDER_SAMPLES_PER_SEG   :: 32
 SURFACE_SAMPLES_PER_SEG  :: 16
 COLLISION_SAMPLES_PER_SEG :: 8
 
+get_track_attribs :: proc(segment: int, t: f32) -> (width: f32, bank: f32) {
+	pts := current_track.points
+	n := len(pts)
+	seg := clamp(segment, 0, n - 2)
+	w0 := pts[seg].width
+	w1 := pts[min(seg + 1, n - 1)].width
+	b0 := pts[seg].bank
+	b1 := pts[min(seg + 1, n - 1)].bank
+	width = w0 + (w1 - w0) * t
+	bank  = b0 + (b1 - b0) * t
+	return
+}
+
 init_track :: proc() {
 	points := build_map00()
 	current_track.points = points
@@ -53,7 +68,7 @@ init_track :: proc() {
 
 	fmt.eprintfln("init_track: %d points, start=(%v) finish=(%v)", n, current_track.start_pos, current_track.finish_pos)
 	for i in 0..<n {
-		fmt.eprintfln("  pt[%d] pos=(%v) surface=%v", i, points[i].pos, points[i].surface)
+		fmt.eprintfln("  pt[%d] pos=(%v) surface=%v width=%.1f bank=%.2f", i, points[i].pos, points[i].surface, points[i].width, points[i].bank)
 	}
 
 	raw_pos := make([]b3.Vec3, n)
@@ -78,7 +93,8 @@ build_surface_samples :: proc(spline_pos: []b3.Vec3) {
 		cp := current_track.points[seg]
 		for s in 0..<SURFACE_SAMPLES_PER_SEG {
 			t := f32(s) / f32(SURFACE_SAMPLES_PER_SEG)
-			pos, _, _, _ := get_road_frame(spline_pos, seg, t)
+			_, bank := get_track_attribs(seg, t)
+			pos, _, _, _ := get_road_frame(spline_pos, seg, t, bank)
 			samples[idx] = SurfaceSample{pos = pos, surface = cp.surface}
 			idx += 1
 		}
@@ -109,8 +125,6 @@ build_track_model :: proc(spline_pos: []b3.Vec3) {
 		.Grass    = {60, 140, 60, 255},
 	}
 
-	hw := ROAD_WIDTH * 0.5
-
 	vi := 0
 	for seg in 0..<num_segs {
 		cp := current_track.points[seg]
@@ -118,10 +132,12 @@ build_track_model :: proc(spline_pos: []b3.Vec3) {
 
 		for s in 0..<RENDER_SAMPLES_PER_SEG {
 			t := f32(s) / f32(RENDER_SAMPLES_PER_SEG)
-			pos, fwd, right, norm := get_road_frame(spline_pos, seg, t)
+			width, bank := get_track_attribs(seg, t)
+			hw := width * 0.5
+			pos, fwd, right, norm := get_road_frame(spline_pos, seg, t, bank)
 
-			left_v := pos + right * hw
-			right_v := pos - right * hw
+			left_v := pos - right * hw
+			right_v := pos + right * hw
 
 			right_side := [2]bool{false, true}
 			for is_right in right_side {
@@ -138,11 +154,13 @@ build_track_model :: proc(spline_pos: []b3.Vec3) {
 		}
 	}
 
-	pos, fwd, right, norm := get_road_frame(spline_pos, num_segs-1, 1.0)
+	last_width, last_bank := get_track_attribs(num_segs-1, 1.0)
+	last_hw := last_width * 0.5
+	pos, fwd, right, norm := get_road_frame(spline_pos, num_segs-1, 1.0, last_bank)
 	last_cp := current_track.points[n-1]
 	col := surface_colors[last_cp.surface]
-	left_v := pos + right * hw
-	right_v := pos - right * hw
+	left_v := pos - right * last_hw
+	right_v := pos + right * last_hw
 	side_ends := [2]bool{false, true}
 	for is_right in side_ends {
 		p := right_v if is_right else left_v
@@ -217,7 +235,7 @@ get_surface_at :: proc(pos: rl.Vector3) -> Surface {
 		}
 	}
 
-	if best_d < ROAD_WIDTH * ROAD_WIDTH {
+	if best_d < 500.0 {
 		return best_surface
 	}
 	return .Pavement

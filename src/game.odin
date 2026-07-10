@@ -140,8 +140,10 @@ update :: proc() -> bool {
 
 draw_finish_line :: proc() {
 	finish := get_track_finish()
-	rl.DrawCube(finish + {0, -0.2, 0}, 10, 0.5, 0.2, rl.WHITE)
-	rl.DrawCube(finish + {0, 0.3, 0}, 10, 0.1, 0.2, {200, 200, 200, 255})
+	pts := get_track_points()
+	fw := pts[len(pts)-1].width
+	rl.DrawCube(finish + {0, -0.2, 0}, fw, 0.5, 0.2, rl.WHITE)
+	rl.DrawCube(finish + {0, 0.3, 0}, fw, 0.1, 0.2, {200, 200, 200, 255})
 }
 
 draw_track :: proc() {
