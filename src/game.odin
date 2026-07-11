@@ -73,9 +73,6 @@ update :: proc() -> bool {
 	dt := rl.GetFrameTime()
 	telemetry.accumulator += dt
 
-	fmt.eprintfln("frame %d", state.frame_count)
-	state.frame_count += 1
-
 	if rl.IsKeyPressed(.TAB) || rl.IsKeyPressed(.R) {
 		restart_race()
 	}
