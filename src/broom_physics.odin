@@ -23,7 +23,7 @@ broom_state: BroomState
 
 init_broom :: proc() {
 	pos := get_start_position()
-	pos.y = 0.5
+	pos.y = 0.25
 
 	def := b3.DefaultBodyDef()
 	def.position = {pos.x, pos.y, pos.z}

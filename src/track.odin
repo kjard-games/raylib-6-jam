@@ -213,11 +213,37 @@ build_track_collision :: proc(registry: TileRegistry) {
 	shape_def.baseMaterial.friction = 0.6
 
 	for inst in current_track.instances {
+		model := current_track.models[inst.model_idx]
+		if model.meshCount == 0 { continue }
+
+		mesh := model.meshes[0]
+		bb := rl.GetMeshBoundingBox(mesh)
+		local_min := bb.min
+		local_max := bb.max
+
+		lc_x := (local_min.x + local_max.x) * 0.5
+		lc_y := (local_min.y + local_max.y) * 0.5
+		lc_z := (local_min.z + local_max.z) * 0.5
+		lh_x := (local_max.x - local_min.x) * 0.5
+		lh_y := (local_max.y - local_min.y) * 0.5
+		lh_z := (local_max.z - local_min.z) * 0.5
+
 		rad := inst.yaw * math.PI / 180.0
+		fwd := b3.Vec3{-math.sin(rad), 0, math.cos(rad)}
+		right_v := b3.Vec3{math.cos(rad), 0, math.sin(rad)}
+		up := b3.Vec3{0, 1, 0}
+
+		s := f32(TILE_RENDER_SCALE)
+		scale_x := s
+		if inst.class == .CornerLeft {
+			scale_x = -s
+		}
+
+		world_center := b3.Vec3{inst.pos.x, inst.pos.y, inst.pos.z} +
+			right_v * (scale_x * lc_x) + up * (s * lc_y) + fwd * (s * lc_z)
+
 		rot := b3.MakeQuatFromAxisAngle(b3.Vec3{0, 1, 0}, rad)
-		// Place hull below the visual model surface
-		xf := b3.Transform{p = {inst.pos.x, -0.5, inst.pos.z}, q = rot}
-		hull := b3.MakeTransformedBoxHull(inst.length, 0.25, f32(TILE_RENDER_SCALE), xf)
+		hull := b3.MakeTransformedBoxHull(abs(scale_x * lh_x), s * lh_y, s * lh_z, {p = world_center, q = rot})
 		_ = b3.CreateHullShape(track_body, shape_def, &hull.base)
 	}
 
