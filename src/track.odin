@@ -7,11 +7,11 @@ import "core:strings"
 import rl "vendor:raylib"
 import b3 "vendor:box3d"
 
-DEFAULT_TILE_SIZE :: 10.0
+DEFAULT_TILE_SIZE :: 30.0
 
 // New kit models are at 1 unit = 1 meter scale; we render them at 10x
 // so they match the old kit's world-space footprint.
-TILE_RENDER_SCALE :: 10.0
+TILE_RENDER_SCALE :: 30.0
 
 TrackBlock :: struct {
 	tile_name: string,
@@ -217,7 +217,7 @@ build_track_collision :: proc(registry: TileRegistry) {
 		rot := b3.MakeQuatFromAxisAngle(b3.Vec3{0, 1, 0}, rad)
 		// Place hull below the visual model surface
 		xf := b3.Transform{p = {inst.pos.x, -0.5, inst.pos.z}, q = rot}
-		hull := b3.MakeTransformedBoxHull(inst.length, 0.25, 3, xf)
+		hull := b3.MakeTransformedBoxHull(inst.length, 0.25, f32(TILE_RENDER_SCALE), xf)
 		_ = b3.CreateHullShape(track_body, shape_def, &hull.base)
 	}
 
